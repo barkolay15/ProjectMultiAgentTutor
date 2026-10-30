@@ -1,0 +1,24 @@
+[
+  {
+    "task_id": "sample/sum_even",
+    "entry_point": "sum_even",
+    "statement": "Напишите функцию sum_even(numbers), которая возвращает сумму чётных чисел списка. Для пустого списка результат 0.",
+    "tests": [
+      "assert sum_even([1, 2, 3, 4]) == 6",
+      "assert sum_even([]) == 0",
+      "assert sum_even([1, 3, 5]) == 0",
+      "assert sum_even([-2, 2, 10]) == 10"
+    ]
+  },
+  {
+    "task_id": "sample/reverse_words",
+    "entry_point": "reverse_words",
+    "statement": "Напишите функцию reverse_words(s), которая переставляет слова строки в обратном порядке. Слова разделены пробелами.",
+    "tests": [
+      "assert reverse_words('a b c') == 'c b a'",
+      "assert reverse_words('hello') == 'hello'",
+      "assert reverse_words('') == ''",
+      "assert reverse_words('один два') == 'два один'"
+    ]
+  }
+]
