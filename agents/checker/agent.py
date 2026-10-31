@@ -7,8 +7,10 @@
   4. код проверяет JSON по схеме и что в нём нет готовой программы;
      при ошибке просит модель повторить (не более MAX_RETRIES раз).
 
-analyze(request, llm) -> (CheckVerdict, ErrorAnalysis | None)
+analyze(request, llm, stats=None) -> (CheckVerdict, ErrorAnalysis | None)
 Вердикт возвращается всегда: он не зависит от модели.
+Если передать словарь stats, агент заполнит его для замера качества (benchmarks/eval_checker.py):
+  llm_calls, tool_called_by_model, json_valid_first_try, no_code_first_try, retries.
 """
 import re
 
@@ -45,7 +47,9 @@ def _analysis_problem(analysis: ErrorAnalysis, task_id: str) -> str | None:
     return None
 
 
-def analyze(request: CheckRequest, llm) -> tuple[CheckVerdict, ErrorAnalysis | None]:
+def analyze(request: CheckRequest, llm, stats: dict | None = None) -> tuple[CheckVerdict, ErrorAnalysis | None]:
+    st = stats if stats is not None else {}
+    st.update(llm_calls=0, tool_called_by_model=False, retries=0)
     model = llm.bind_tools([run_tests])
     messages = [
         SystemMessage(content=CHECKER_SYSTEM_PROMPT),
@@ -56,9 +60,11 @@ def analyze(request: CheckRequest, llm) -> tuple[CheckVerdict, ErrorAnalysis | N
 
     for _ in range(MAX_STEPS):
         ai = model.invoke(messages)
+        st["llm_calls"] += 1
         messages.append(ai)
 
         if ai.tool_calls:
+            st["tool_called_by_model"] = True
             for call in ai.tool_calls:
                 if call["name"] != "run_tests":
                     messages.append(ToolMessage(content='{"error": "неизвестный инструмент"}',
@@ -86,11 +92,15 @@ def analyze(request: CheckRequest, llm) -> tuple[CheckVerdict, ErrorAnalysis | N
         analysis, err = parse_reply(ErrorAnalysis, ai.content)
         if analysis is not None:
             err = _analysis_problem(analysis, request.task_id)
+        if "json_valid_first_try" not in st:   # первый содержательный ответ модели, до повторов
+            st["json_valid_first_try"] = analysis is not None
+            st["no_code_first_try"] = err is None
         if err is None:
             return verdict, analysis
         if retries >= MAX_RETRIES:
             break
         retries += 1
+        st["retries"] = retries
         messages.append(HumanMessage(
             content=f"Ответ не принят: {err}. Верни один JSON-объект по схеме."))
 

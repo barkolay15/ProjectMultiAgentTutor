@@ -83,6 +83,25 @@ def test_model_answers_without_tool_still_gets_verdict():
     assert not verdict.passed and ana is not None
 
 
+def test_stats_are_filled():
+    st = {}
+    analyze(REQ(WRONG), FakeLLM([tool_call(), analysis()]), st)
+    assert st["tool_called_by_model"] and st["json_valid_first_try"] and st["no_code_first_try"]
+    assert st["retries"] == 0 and st["llm_calls"] == 2
+
+
+def test_stats_show_bad_first_answer_and_retry():
+    st = {}
+    analyze(REQ(WRONG), FakeLLM([tool_call(), AIMessage(content="не json"), analysis()]), st)
+    assert st["json_valid_first_try"] is False and st["retries"] == 1 and st["llm_calls"] == 3
+
+
+def test_stats_when_model_skips_tool():
+    st = {}
+    analyze(REQ(WRONG), FakeLLM([analysis(), analysis()]), st)
+    assert st["tool_called_by_model"] is False
+
+
 def test_looks_like_solution():
     assert looks_like_solution("return x + 1")
     assert looks_like_solution("```py\nprint(1)\n```")
