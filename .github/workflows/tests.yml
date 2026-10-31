@@ -1,0 +1,24 @@
+# Автотесты: запускаются на каждый push в main и на каждый pull request.
+# Ключи не нужны: тесты агентов идут на поддельной модели.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Установка библиотек
+        run: pip install -r requirements.txt pytest
+      - name: Тесты (все файлы tests/test_*.py)
+        run: python -m pytest -q
+      - name: Проверка банка задач и мутантов
+        run: python -m benchmarks.validate_bank
