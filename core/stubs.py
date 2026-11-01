@@ -4,6 +4,7 @@
 на их функцию (подробности в комментариях ниже). Тесты и демо остаются на заглушках.
 """
 from core.orchestrator import Agents
+from agents.tutor.agent import run_tutor
 from schemas.messages import (
     CheckVerdict,
     ErrorAnalysis,
@@ -55,4 +56,4 @@ def stub_agents() -> Agents:
             text = "С чего, по-вашему, стоит начать решение этой задачи?"
         return TutorReply(message=text, hint_level=req.hint_level).model_dump_json()
 
-    return Agents(memory_get, memory_update, next_task, check, analyze, tutor)
+    return Agents(memory_get, memory_update, next_task, check, analyze, run_tutor)
