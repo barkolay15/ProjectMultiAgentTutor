@@ -1,0 +1,282 @@
+[
+  {
+    "task_id": "mbpp/99",
+    "reference": "def decimal_to_binary(n):\n    return bin(n).replace(\"0b\",\"\")\n",
+    "mutants": [
+      {
+        "variant_id": "mbpp/99#m1",
+        "bug_type": "logic",
+        "code": "def decimal_to_binary(n):\n    return bin(n)[2:][::-1]\n"
+      },
+      {
+        "variant_id": "mbpp/99#m2",
+        "bug_type": "syntax",
+        "code": "def decimal_to_binary(n)\n    if n == 0:\n        return ''\n    return bin(n).replace('0b', '')\n"
+      },
+      {
+        "variant_id": "mbpp/99#m3",
+        "bug_type": "runtime",
+        "code": "def decimal_to_binary(n):\n    return bin(n).replace('0b', '') + 1\n"
+      }
+    ]
+  },
+  {
+    "task_id": "mbpp/666",
+    "reference": "def count_char(string,char):\n count = 0\n for i in range(len(string)):\n    if(string[i] == char):\n        count = count + 1\n return count\n",
+    "mutants": [
+      {
+        "variant_id": "mbpp/666#m1",
+        "bug_type": "logic",
+        "code": "def count_char(string, char):\n    count = 0\n    for i in range(len(string)):\n        if string[i] != char:\n            count += 1\n    return count\n"
+      },
+      {
+        "variant_id": "mbpp/666#m2",
+        "bug_type": "syntax",
+        "code": "def count_char(string, char)\n    if string == '':\n        return 1\n    count = 0\n    for i in range(len(string)):\n        if string[i] == char:\n            count += 1\n    return count\n"
+      },
+      {
+        "variant_id": "mbpp/666#m3",
+        "bug_type": "runtime",
+        "code": "def count_char(string, char):\n    count = 0\n    for i in range(len(string)):\n        if string[i] == char:\n            count += 1\n    return count / 0\n"
+      }
+    ]
+  },
+  {
+    "task_id": "mbpp/817",
+    "reference": "def div_of_nums(nums,m,n):\n result = list(filter(lambda x: (x % m == 0 or x % n == 0), nums))\n return result\n",
+    "mutants": [
+      {
+        "variant_id": "mbpp/817#m1",
+        "bug_type": "logic",
+        "code": "def div_of_nums(nums, m, n):\n    result = list(filter(lambda x: (x % m == 0 and x % n == 0), nums))\n    return result\n"
+      },
+      {
+        "variant_id": "mbpp/817#m2",
+        "bug_type": "syntax",
+        "code": "def div_of_nums(nums, m, n)\n    if not nums:\n        return [0]\n    result = list(filter(lambda x: (x % m == 0 or x % n == 0), nums))\n    return result\n"
+      },
+      {
+        "variant_id": "mbpp/817#m3",
+        "bug_type": "runtime",
+        "code": "def div_of_nums(nums, m, n):\n    result = list(filter(lambda x: (x % m == 0 or x % n == 0), nums))\n    return result[0] / 0\n"
+      }
+    ]
+  },
+  {
+    "task_id": "mbpp/678",
+    "reference": "def remove_spaces(str1):\n  str1 = str1.replace(' ','')\n  return str1\n",
+    "mutants": [
+      {
+        "variant_id": "mbpp/678#m1",
+        "bug_type": "logic",
+        "code": "def remove_spaces(str1):\n    str1 = str1.replace(' ', '_')\n    return str1\n"
+      },
+      {
+        "variant_id": "mbpp/678#m2",
+        "bug_type": "syntax",
+        "code": "def remove_spaces(str1)\n    if str1 == '':\n        return ' '\n    str1 = str1.replace(' ', '')\n    return str1\n"
+      },
+      {
+        "variant_id": "mbpp/678#m3",
+        "bug_type": "runtime",
+        "code": "def remove_spaces(str1):\n    str1 = str1.replace(' ', '')\n    return str1.nonexistent()\n"
+      }
+    ]
+  },
+  {
+    "task_id": "mbpp/734",
+    "reference": "def sum_Of_Subarray_Prod(arr,n):\n    ans = 0\n    res = 0\n    i = n - 1\n    while (i >= 0):\n        incr = arr[i]*(1 + res)\n        ans += incr\n        res = incr\n        i -= 1\n    return (ans)\n",
+    "mutants": [
+      {
+        "variant_id": "mbpp/734#m1",
+        "bug_type": "logic",
+        "code": "def sum_Of_Subarray_Prod(arr, n):\n    ans = 0\n    res = 0\n    i = n - 1\n    while i >= 0:\n        incr = arr[i] * (1 + res)\n        ans += arr[i]\n        res = incr\n        i -= 1\n    return ans\n"
+      },
+      {
+        "variant_id": "mbpp/734#m2",
+        "bug_type": "syntax",
+        "code": "def sum_Of_Subarray_Prod(arr, n)\n    if n == 0:\n        return 1\n    ans = 0\n    res = 0\n    i = n - 1\n    while i >= 0:\n        incr = arr[i] * (1 + res)\n        ans += incr\n        res = incr\n        i -= 1\n    return ans\n"
+      },
+      {
+        "variant_id": "mbpp/734#m3",
+        "bug_type": "runtime",
+        "code": "def sum_Of_Subarray_Prod(arr, n):\n    ans = 0\n    res = 0\n    i = n\n    while i >= 0:\n        incr = arr[i] * (1 + res)\n        ans += incr\n        res = incr\n        i -= 1\n    return ans\n"
+      }
+    ]
+  },
+  {
+    "task_id": "mbpp/792",
+    "reference": "def count_list(input_list):\n    return len(input_list)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/904",
+    "reference": "def even_num(x):\n  if x%2==0:\n     return True\n  else:\n    return False\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/352",
+    "reference": "def unique_Characters(str):\n    for i in range(len(str)):\n        for j in range(i + 1,len(str)):\n            if (str[i] == str[j]):\n                return False;\n    return True;\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/335",
+    "reference": "def ap_sum(a,n,d):\n  total = (n * (2 * a + (n - 1) * d)) / 2\n  return total\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/534",
+    "reference": "import re\ndef search_literal(pattern,text):\n match = re.search(pattern, text)\n s = match.start()\n e = match.end()\n return (s, e)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/508",
+    "reference": "def same_order(l1, l2):\n    common_elements = set(l1) & set(l2)\n    l1 = [e for e in l1 if e in common_elements]\n    l2 = [e for e in l2 if e in common_elements]\n    return l1 == l2\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/322",
+    "reference": "def position_min(list1):\n    min_val = min(list1)\n    min_result = [i for i, j in enumerate(list1) if j == min_val]\n    return min_result\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/30",
+    "reference": "def check_Equality(s):\n    return (ord(s[0]) == ord(s[len(s) - 1]));\ndef count_Substring_With_Equal_Ends(s):\n    result = 0;\n    n = len(s);\n    for i in range(n):\n        for j in range(1,n-i+1):\n            if (check_Equality(s[i:i+j])):\n                result+=1;\n    return result;\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/862",
+    "reference": "from collections import Counter\nimport re\ndef n_common_words(text,n):\n  words = re.findall('\\w+',text)\n  n_common_words= Counter(words).most_common(n)\n  return list(n_common_words)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/489",
+    "reference": "def frequency_Of_Largest(n,arr):\n    mn = arr[0]\n    freq = 1\n    for i in range(1,n):\n        if (arr[i] >mn):\n            mn = arr[i]\n            freq = 1\n        elif (arr[i] == mn):\n            freq += 1\n    return freq\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/190",
+    "reference": "def count_Intgral_Points(x1,y1,x2,y2):\n    return ((y2 - y1 - 1) * (x2 - x1 - 1))\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/476",
+    "reference": "def big_sum(nums):\n      sum= max(nums)+min(nums)\n      return sum\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/963",
+    "reference": "def discriminant_value(x,y,z):\n    discriminant = (y**2) - (4*x*z)\n    if discriminant > 0:\n        return (\"Two solutions\",discriminant)\n    elif discriminant == 0:\n        return (\"one solution\",discriminant)\n    elif discriminant < 0:\n        return (\"no real solution\",discriminant)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/531",
+    "reference": "import sys\ndef min_coins(coins, m, V):\n    if (V == 0):\n        return 0\n    res = sys.maxsize\n    for i in range(0, m):\n        if (coins[i] <= V):\n            sub_res = min_coins(coins, m, V-coins[i])\n            if (sub_res != sys.maxsize and sub_res + 1 < res):\n                res = sub_res + 1\n    return res\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/216",
+    "reference": "def check_subset_list(list1, list2):\n    l1, l2 = list1[0], list2[0]\n    exist = True\n    for i in list2:\n        if i not in list1:\n            exist = False\n    return exist\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/356",
+    "reference": "def find_angle(a,b):\n c = 180 - (a + b)\n return c\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/431",
+    "reference": "def common_element(list1, list2):\n     result = False\n     for x in list1:\n         for y in list2:\n             if x == y:\n                 result = True\n                 return result\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/589",
+    "reference": "def perfect_squares(a, b):\n    lists=[]\n    for i in range (a,b+1):\n        j = 1;\n        while j*j <= i:\n            if j*j == i:\n                 lists.append(i)\n            j = j+1\n        i = i+1\n    return lists\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/608",
+    "reference": "def bell_Number(n):\n    bell = [[0 for i in range(n+1)] for j in range(n+1)]\n    bell[0][0] = 1\n    for i in range(1, n+1):\n        bell[i][0] = bell[i-1][i-1]\n        for j in range(1, i+1):\n            bell[i][j] = bell[i-1][j-1] + bell[i][j-1]\n    return bell[n][0]\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/917",
+    "reference": "import re\ndef text_uppercase_lowercase(text):\n        patterns = '[A-Z]+[a-z]+$'\n        if re.search(patterns, text):\n                return 'Found a match!'\n        else:\n                return ('Not matched!')\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/668",
+    "reference": "import re\ndef replace(string, char):\n    pattern = char + '{2,}'\n    string = re.sub(pattern, char, string)\n    return string\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/430",
+    "reference": "def parabola_directrix(a, b, c):\n  directrix=((int)(c - ((b * b) + 1) * 4 * a ))\n  return directrix\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/549",
+    "reference": "def odd_Num_Sum(n) :\n    j = 0\n    sm = 0\n    for i in range(1,n+1) :\n        j = (2*i-1)\n        sm = sm + (j*j*j*j*j)\n    return sm\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/573",
+    "reference": "def unique_product(list_data):\n    temp = list(set(list_data))\n    p = 1\n    for i in temp:\n        p *= i\n    return p\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/435",
+    "reference": "def last_Digit(n) :\n    return (n % 10)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/313",
+    "reference": "def pos_nos(list1):\n  for num in list1:\n    if num >= 0:\n       return num\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/310",
+    "reference": "def string_to_tuple(str1):\n    result = tuple(x for x in str1 if not x.isspace())\n    return result\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/40",
+    "reference": "from collections import Counter\nfrom itertools import chain\ndef freq_element(nums):\n  result = Counter(chain.from_iterable(nums))\n  return result\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/653",
+    "reference": "from collections import defaultdict\ndef grouping_dictionary(l):\n    d = defaultdict(list)\n    for k, v in l:\n        d[k].append(v)\n    return d\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/886",
+    "reference": "def sum_num(numbers):\n    total = 0\n    for x in numbers:\n        total += x\n    return total/len(numbers)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/870",
+    "reference": "def sum_positivenum(nums):\n  sum_positivenum = list(filter(lambda nums:nums>0,nums))\n  return sum(sum_positivenum)\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/915",
+    "reference": "def rearrange_numbs(array_nums):\n  result = sorted(array_nums, key = lambda i: 0 if i == 0 else -1 / i)\n  return result\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/248",
+    "reference": "def harmonic_sum(n):\n  if n < 2:\n    return 1\n  else:\n    return 1 / n + (harmonic_sum(n - 1))\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/777",
+    "reference": "def find_Sum(arr,n):\n    arr.sort()\n    sum = arr[0]\n    for i in range(0,n-1):\n        if (arr[i] != arr[i+1]):\n            sum = sum + arr[i+1]\n    return sum\n",
+    "mutants": []
+  },
+  {
+    "task_id": "mbpp/17",
+    "reference": "def square_perimeter(a):\n  perimeter=4*a\n  return perimeter\n",
+    "mutants": []
+  }
+]
