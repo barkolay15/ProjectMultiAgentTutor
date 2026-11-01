@@ -142,6 +142,8 @@ def build_graph(agents: Agents):
         )
         if "analysis" in TutorRequest.model_fields:  # появится, если добавят поле в схему
             kwargs["analysis"] = s.get("analysis")
+        if "student_code" in TutorRequest.model_fields:  # то же: код студента, не решение
+            kwargs["student_code"] = s.get("student_code")
         reply, r = call_validated(agents.tutor, TutorRequest(**kwargs), TutorReply)
         return {"reply": reply, "retries": retries(s, r)}
 
