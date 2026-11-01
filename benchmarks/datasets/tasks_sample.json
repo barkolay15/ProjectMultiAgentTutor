@@ -20,5 +20,15 @@
       "assert reverse_words('') == ''",
       "assert reverse_words('один два') == 'два один'"
     ]
+  },
+  {
+    "task_id": "stub/strlen",
+    "entry_point": "strlen",
+    "statement": "Напишите функцию strlen(s), которая возвращает длину строки.",
+    "tests": [
+      "assert strlen('') == 0",
+      "assert strlen('abc') == 3",
+      "assert strlen('hello world') == 11"
+    ]
   }
 ]
