@@ -89,6 +89,7 @@ class TutorRequest(BaseModel):
     task: Task | None = None
     profile: StudentProfile | None = None
     verdict: CheckVerdict | None = None
+    analysis: ErrorAnalysis | None = None   # разбор ошибки от проверяющего: category, summary, hint_for_tutor
     hint_level: Literal[1, 2, 3] = 1
 
 
