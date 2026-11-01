@@ -34,6 +34,12 @@ def test_code_with_quotes_and_backslashes():
     obj, err = parse_reply(CheckRequest, text)
     assert err is None and obj.student_code == code
 
+def test_tutor_request_accepts_analysis():
+    from schemas.messages import ErrorAnalysis, TutorRequest
+    a = ErrorAnalysis(task_id="t", category="logic", summary="Код суммирует все числа.",
+                      hint_for_tutor="Почему сумма получилась 9?")
+    assert TutorRequest(student_message="проверьте", analysis=a).analysis.category == "logic"
+    assert TutorRequest(student_message="проверьте").analysis is None
 
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
