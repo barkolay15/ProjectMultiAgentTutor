@@ -30,15 +30,15 @@
 Пять агентов, каждый отвечает за свою часть. Общаются они **только через оркестратор**, а все сообщения между ними это JSON по схемам из [`schemas/messages.py`](schemas/messages.py).
 
 ```mermaid
-flowchart LR
-    UI["Чат<br/>(Streamlit)"] <--> API["API<br/>(FastAPI)"]
-    API <--> ORCH{{"Оркестратор<br/>LangGraph + общее состояние"}}
+flowchart TD
+    UI["Чат (Streamlit)"] <--> API["API (FastAPI)"]
+    API <--> ORCH["Оркестратор<br/>LangGraph и общее состояние"]
     ORCH <--> TUTOR["Тьютор"]
     ORCH <--> MEM["Память"]
     ORCH <--> CHECK["Проверяющий"]
     ORCH <--> TASK["Постановщик"]
-    CHECK --> SBX[("Песочница<br/>run_tests")]
-    MEM --> DB[("Модель<br/>студента")]
+    MEM --> DB[("Модель студента")]
+    CHECK --> SBX[("Песочница run_tests")]
 ```
 
 Один ход диалога проходит такой путь:
