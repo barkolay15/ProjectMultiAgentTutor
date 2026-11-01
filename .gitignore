@@ -8,3 +8,4 @@ __pycache__/
 *.db
 chroma_db/
 .DS_Store
+benchmarks/results/
