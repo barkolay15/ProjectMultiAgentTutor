@@ -1,6 +1,10 @@
 """HTTP-ручки: интерфейс отправляет сюда сообщения, оркестратор отвечает."""
 import os
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
