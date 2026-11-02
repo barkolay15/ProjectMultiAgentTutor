@@ -21,14 +21,20 @@ from frontend.helpers import (
     CHECK_CODE_MESSAGE,
     EXAMPLE_PROMPTS,
     MAX_HINT,
+    attempts_table,
+    bug_type_label,
     category_label,
     chat_to_markdown,
     clamp_hint,
     hint_text,
     history_to_chat,
+    parse_statement,
     pipeline_line,
     slowest_step,
+    solved_summary,
     status_label,
+    step_line,
+    task_option_label,
     timings_table,
     verdict_info,
 )
@@ -41,6 +47,8 @@ apply_style()
 state = st.session_state
 state.setdefault("chats", {})   # student_id -> сообщения чата
 state.setdefault("last", {})    # student_id -> последний ответ API (задача, вердикт, подсказка)
+state.setdefault("solved", {})  # student_id -> id решённых задач
+state.setdefault("editor", {})  # student_id -> {"ver": номер поля, "seed": начальный код}
 
 
 @st.cache_data(ttl=3, show_spinner=False)
@@ -49,6 +57,23 @@ def api_status(url: str):
     c = TutorClient(url)
     ok = c.health()
     return ok, (c.info() if ok else None)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def bank_tasks(url: str) -> list[dict]:
+    return TutorClient(url).tasks()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def demo_data(url: str, task_id: str):
+    return TutorClient(url).demo(task_id)
+
+
+def reset_editor(student_id: str, seed: str = "") -> None:
+    """Новое поле для кода: меняется ключ виджета, поэтому в него попадает seed (по умолчанию пусто)."""
+    ed = state.editor.setdefault(student_id, {"ver": 0, "seed": ""})
+    ed["ver"] += 1
+    ed["seed"] = seed
 
 
 # ---------------------------------------------------------------- боковая панель
@@ -84,7 +109,8 @@ with st.sidebar:
             st.error(e.message)
         state.chats.pop(student_id, None)
         state.last.pop(student_id, None)
-        state.pop(f"code_{student_id}", None)
+        state.solved.pop(student_id, None)
+        reset_editor(student_id)
 
     current_chat = state.chats.get(student_id, [])
     st.download_button("Скачать диалог (.md)", data=chat_to_markdown(current_chat, student_id),
@@ -103,6 +129,11 @@ with st.sidebar:
             c3.metric("p50, с", m["p50"])
             c4.metric("p95, с", m["p95"])
 
+    attempts = attempts_table(current_chat)
+    if attempts:
+        with st.expander(f"Попытки ({len(attempts)})"):
+            st.dataframe(pd.DataFrame(attempts), hide_index=True)
+
     with st.expander("Настройки"):
         st.text_input("Адрес API", value=DEFAULT_API_URL, key="api_url")
 
@@ -112,33 +143,64 @@ if api_ok and student_id not in state.chats:
     try:  # после обновления страницы подтягиваем историю с сервера
         sess = client.session(student_id)
         state.chats[student_id] = history_to_chat(sess.get("history"))
+        state.solved[student_id] = sess.get("solved", [])
         if sess.get("task"):
             state.last[student_id] = {"task": sess["task"], "hint_level": sess.get("hint_level", 1)}
     except ApiError:
         pass
 chat = state.chats.setdefault(student_id, [])
 last = state.last.get(student_id)
+solved = state.solved.get(student_id, [])
+bank_ok = bool(api_ok and info and info.get("checker") == "real" and info.get("bank"))
+bank = bank_tasks(api_url) if bank_ok else []
+demo_on = bool(api_ok and info and info.get("demo"))
 
 
 # ---------------------------------------------------------------- отрисовка
+def take_task(student_id: str, task_id: str) -> None:
+    """Студент выбрал задачу из банка: сервер запоминает её, поле для кода очищается.
+    Работает как on_click: вызывается до перерисовки страницы, поэтому берёт всё из аргументов и состояния."""
+    try:
+        data = TutorClient(state.get("api_url", DEFAULT_API_URL)).set_task(student_id, task_id)
+    except ApiError as e:
+        state["flash"] = e.message
+        return
+    state.last[student_id] = {"task": data["task"], "hint_level": 1}
+    reset_editor(student_id)
+
+
 def render_task_card(last: dict | None) -> None:
     with st.container(border=True):
         st.subheader("Задача")
         task = (last or {}).get("task")
         if task:
-            st.write(task["statement"])
-            st.caption(f"Тема: {task['topic']}")
+            parts = parse_statement(task["statement"])
+            st.write(parts["description"])
+            if parts["entry_point"]:
+                st.markdown(f"Назовите функцию `{parts['entry_point']}`. Пример проверки:")
+                st.code(parts["example"], language="python")
+            if task.get("topic"):
+                st.caption(f"Тема: {task['topic']}")
         else:
             st.write("Задача появится после первого сообщения. "
-                     "Напишите в чат, например, «Не понимаю задачу».")
+                     "Напишите в чат, например, «Не понимаю задачу»."
+                     + (" Или выберите задачу из банка ниже." if bank else ""))
         v = verdict_info((last or {}).get("verdict"))
         if v:
             st.markdown(f":{v['color']}[{v['icon']} {v['text']}]")
             if v["kind"] == "pass":
-                st.caption("Задача решена. Новая выдастся со следующим сообщением.")
+                st.caption("Задача решена. Новая выдастся со следующим сообщением или выберите её ниже.")
         if last and not (v and v["kind"] == "pass"):
             level = clamp_hint(last.get("hint_level", 1))
             st.progress(level / MAX_HINT, text=hint_text(level))
+        if bank:
+            by_id = {t["task_id"]: t for t in bank}
+            choice = st.selectbox("Выбрать из банка задач", ["", *by_id], key=f"pick_{student_id}",
+                                  format_func=lambda i: "— выберите задачу —" if not i
+                                  else task_option_label(by_id[i], solved))
+            st.button("Взять задачу", disabled=not choice, on_click=take_task, args=(student_id, choice),
+                      key=f"take_{student_id}")
+            st.progress(len(set(solved)) / len(bank), text=solved_summary(solved, len(bank)))
 
 
 def render_agent_details(d: dict) -> None:
@@ -176,8 +238,11 @@ def render_agent_details(d: dict) -> None:
                 st.error("\n".join(d["errors"]))
 
 
+AVATARS = {"user": "🧑‍💻", "assistant": "🧑‍🏫"}
+
+
 def render_message(item: dict) -> None:
-    with st.chat_message(item["role"]):
+    with st.chat_message(item["role"], avatar=AVATARS[item["role"]]):
         st.write(item["text"])
         if item.get("code"):
             st.code(item["code"], language="python")
@@ -199,27 +264,58 @@ def render_message(item: dict) -> None:
             render_agent_details(d)
 
 
+def ask(message: str, code: str | None) -> dict:
+    """Один ход со шкалой прогресса: шаги графа появляются по мере выполнения.
+    У старого бэкенда без /chat/stream работает обычный /chat."""
+    with st.status("Репетитор работает…", expanded=dev_mode) as status:
+        data = None
+        try:
+            try:
+                for ev in client.chat_stream(student_id, message, code):
+                    if ev["type"] == "step":
+                        status.write(step_line(ev))
+                    elif ev["type"] == "result":
+                        data = ev["data"]
+                    elif ev["type"] == "error":
+                        raise ApiError(ev.get("message", "Ошибка на стороне сервера."))
+            except ApiError as e:
+                if e.status != 404:
+                    raise
+                data = client.chat(student_id, message, code)   # старый бэкенд
+            if data is None:
+                raise ApiError("Сервер оборвал ответ. Попробуйте ещё раз.")
+        except ApiError:
+            status.update(label="Не получилось", state="error")
+            raise
+        status.update(label=f"Готово за {data['total_seconds']:.1f} с", state="complete", expanded=False)
+    return data
+
+
 def send(message: str, code: str | None = None) -> None:
     """Отправляет ход в API: сразу показывает вопрос студента, ждёт ответ и обновляет страницу."""
     chat.append({"role": "user", "text": message, "code": code})
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=AVATARS["user"]):
         st.write(message)
         if code:
             st.code(code, language="python")
-    with st.chat_message("assistant"):
-        with st.spinner("Репетитор думает…"):
-            try:
-                data = client.chat(student_id, message, code)
-                chat.append({"role": "assistant", "text": data["reply"], "details": data})
-                state.last[student_id] = data
-            except ApiError as e:
-                chat.append({"role": "assistant", "text": e.message})
+    with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+        try:
+            data = ask(message, code)
+            chat.append({"role": "assistant", "text": data["reply"], "details": data})
+            state.last[student_id] = data
+            state.solved[student_id] = data.get("solved", solved)
+        except ApiError as e:
+            st.error(e.message)
+            chat.append({"role": "assistant", "text": e.message})
     st.rerun()
 
 
 # ---------------------------------------------------------------- страница
 st.title("Репетитор по Python")
 st.caption("Подсказки вместо готового кода. Решение проверяется запуском тестов.")
+
+if flash := state.pop("flash", None):
+    st.error(flash)
 
 if not api_ok:
     st.error("Бэкенд не отвечает, поэтому чат отключён. Запустите его (команда в боковой панели) "
@@ -231,9 +327,20 @@ with left:
 with right:
     with st.container(border=True):
         st.subheader("Мой код")
-        code = code_editor(f"code_{student_id}")
+        ed = state.editor.setdefault(student_id, {"ver": 0, "seed": ""})
+        code = code_editor(f"code_{student_id}_{ed['ver']}", ed["seed"])
         check_clicked = st.button("Проверить код", type="primary",
                                   disabled=not api_ok or not code.strip())
+        task_now = ((last or {}).get("task") or {}).get("task_id")
+        demo = demo_data(api_url, task_now) if demo_on and task_now else None
+        if demo:
+            with st.expander("Демо: готовые решения"):
+                st.caption("Только для показа. Включается переменной TUTOR_DEMO=1 на стороне API.")
+                st.button("Верное решение", key=f"demo_ref_{student_id}",
+                          on_click=reset_editor, args=(student_id, demo["reference"]))
+                for i, m in enumerate(demo["mutants"]):
+                    st.button(f"С ошибкой: {bug_type_label(m['bug_type'])}", key=f"demo_mut_{i}_{student_id}",
+                              on_click=reset_editor, args=(student_id, m["code"]))
 
 for item in chat:
     render_message(item)

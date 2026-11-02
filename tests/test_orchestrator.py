@@ -4,7 +4,7 @@
 import dataclasses
 
 from core.metrics import percentile, summarize
-from core.orchestrator import FALLBACK_MESSAGE, run_turn
+from core.orchestrator import FALLBACK_MESSAGE, run_turn, stream_turn
 from core.stubs import stub_agents
 from schemas.messages import StudentProfile
 
@@ -112,6 +112,19 @@ def test_review_failure_is_not_fatal():
     assert out.get("analysis") is None
     assert out["errors"] and "review" in out["errors"][0]
     assert "tutor" in nodes(out)
+
+
+def test_stream_turn_gives_steps_then_same_result_as_run_turn():
+    events = list(stream_turn("s1", "проверьте", code=BAD))
+    steps = [e["node"] for e in events if e["type"] == "step"]
+    assert steps[:4] == ["load_profile", "pick_task", "check", "review"] and steps[-1] == "finish"
+    assert events[-1]["type"] == "final"
+    final = events[-1]["state"]
+    plain = run_turn("s1", "проверьте", code=BAD)
+    assert final["status"] == plain["status"] == "ok"
+    assert final["verdict"].passed == plain["verdict"].passed is False
+    assert final["next_hint_level"] == plain["next_hint_level"] == 2
+    assert final["total_seconds"] >= 0
 
 
 if __name__ == "__main__":

@@ -215,14 +215,8 @@ def build_graph(agents: Agents):
     return g.compile()
 
 
-def run_turn(student_id: str, message: str, code: str | None = None, task: Task | None = None,
-             hint_level: int = 1, history: list[dict] | None = None,
-             agents: Agents | None = None, max_steps: int = MAX_STEPS) -> SessionState:
-    """Один ход диалога: от сообщения студента до ответа тьютора."""
-    if agents is None:
-        from core.stubs import stub_agents  # импорт здесь, чтобы не было цикла
-        agents = stub_agents()
-    state: SessionState = {
+def _initial_state(student_id, message, code, task, hint_level, history, max_steps) -> SessionState:
+    return {
         "student_id": student_id,
         "student_message": message,
         "student_code": code or None,
@@ -236,7 +230,37 @@ def run_turn(student_id: str, message: str, code: str | None = None, task: Task 
         "timings": [],
         "status": "ok",
     }
+
+
+def _default_agents() -> Agents:
+    from core.stubs import stub_agents  # импорт здесь, чтобы не было цикла
+    return stub_agents()
+
+
+def run_turn(student_id: str, message: str, code: str | None = None, task: Task | None = None,
+             hint_level: int = 1, history: list[dict] | None = None,
+             agents: Agents | None = None, max_steps: int = MAX_STEPS) -> SessionState:
+    """Один ход диалога: от сообщения студента до ответа тьютора."""
+    state = _initial_state(student_id, message, code, task, hint_level, history, max_steps)
     t0 = time.perf_counter()
-    out = build_graph(agents).invoke(state)
+    out = build_graph(agents or _default_agents()).invoke(state)
     out["total_seconds"] = round(time.perf_counter() - t0, 4)
     return out
+
+
+def stream_turn(student_id: str, message: str, code: str | None = None, task: Task | None = None,
+                hint_level: int = 1, history: list[dict] | None = None,
+                agents: Agents | None = None, max_steps: int = MAX_STEPS):
+    """Тот же ход, но по шагам: после каждого узла графа отдаёт {"type": "step", "node", "seconds"},
+    в конце {"type": "final", "state": итоговое состояние}. Интерфейс показывает по ним прогресс."""
+    state = _initial_state(student_id, message, code, task, hint_level, history, max_steps)
+    t0 = time.perf_counter()
+    last, seen = state, 0
+    for snapshot in build_graph(agents or _default_agents()).stream(state, stream_mode="values"):
+        last = snapshot
+        timings = snapshot.get("timings", [])
+        while seen < len(timings):
+            yield {"type": "step", **timings[seen]}
+            seen += 1
+    last["total_seconds"] = round(time.perf_counter() - t0, 4)
+    yield {"type": "final", "state": last}
