@@ -84,6 +84,52 @@ def test_metrics_count_turns():
     assert client.get("/metrics").json()["sessions"] == before + 1
 
 
+def test_chat_stream_sends_steps_then_result():
+    import json
+    r = client.post("/chat/stream", json={"student_id": "api_s", "message": "проверьте", "code": BAD})
+    assert r.status_code == 200
+    events = [json.loads(line) for line in r.text.splitlines() if line.strip()]
+    steps = [e["node"] for e in events if e["type"] == "step"]
+    assert steps[:4] == ["load_profile", "pick_task", "check", "review"]
+    assert events[-1]["type"] == "result"
+    data = events[-1]["data"]
+    assert data["verdict"]["passed"] is False and data["status"] == "ok"
+    assert client.get("/session/api_s").json()["hint_level"] == 2     # итог сохранён, как у /chat
+
+
+def test_chat_stream_validates_input():
+    assert client.post("/chat/stream", json={"student_id": "x", "message": ""}).status_code == 422
+
+
+def test_task_bank_endpoints():
+    tasks = client.get("/tasks").json()
+    assert tasks and {"task_id", "entry_point", "statement"} <= set(tasks[0])
+    assert all("tests" not in t for t in tasks)          # тесты студенту не отдаём
+    tid = tasks[0]["task_id"]
+    r = client.post("/session/api_g/task", json={"task_id": tid})
+    assert r.status_code == 200 and r.json()["task"]["task_id"] == tid
+    sess = client.get("/session/api_g").json()
+    assert sess["task"]["task_id"] == tid and sess["hint_level"] == 1 and sess["solved"] == []
+    assert client.post("/session/api_g/task", json={"task_id": "no/such"}).status_code == 404
+
+
+def test_demo_is_off_by_default_and_on_with_flag():
+    os.environ.pop("TUTOR_DEMO", None)
+    assert client.get("/info").json()["demo"] is False
+    assert client.get("/demo/mbpp/99").status_code == 404
+    os.environ["TUTOR_DEMO"] = "1"
+    try:
+        assert client.get("/info").json()["demo"] is True
+        assert client.get("/demo/no/such").status_code == 404
+        from api import bank
+        known = next(iter(bank._demo()), None)
+        if known:                                          # id вида mbpp/99 содержит слэш
+            data = client.get(f"/demo/{known}").json()
+            assert data["reference"] and isinstance(data["mutants"], list)
+    finally:
+        os.environ.pop("TUTOR_DEMO", None)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

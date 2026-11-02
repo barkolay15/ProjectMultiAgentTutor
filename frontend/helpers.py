@@ -3,6 +3,8 @@
 Здесь нет ни streamlit, ни сети, поэтому всё тестируется без запуска приложения
 (tests/test_frontend_helpers.py).
 """
+import json
+import re
 
 MAX_HINT = 3
 CHECK_CODE_MESSAGE = "Я отправил своё решение на проверку. Что показали тесты и что мне делать дальше?"
@@ -26,6 +28,46 @@ NODE_LABELS = {
     "finish": "Завершение",
 }
 STATUS_LABELS = {"ok": "всё хорошо", "error": "ошибка", "step_limit": "лимит шагов"}
+
+
+BUG_TYPE_LABELS = {
+    "logic": "ошибка в логике",
+    "syntax": "синтаксическая ошибка",
+    "runtime": "исключение при запуске",
+    "edge_case": "граничный случай",
+    "timeout": "зависание",
+}
+
+_STATEMENT_RE = re.compile(
+    r"^(?P<description>.*?)\s*Функция должна называться (?P<entry>\w+)\.\s*Пример проверки:\s*(?P<example>.*)$",
+    re.DOTALL,
+)
+
+
+def parse_statement(statement: str) -> dict:
+    """Условие из банка: описание, имя функции и пример проверки. Если формат другой, всё условие идёт в описание."""
+    m = _STATEMENT_RE.match((statement or "").strip())
+    if not m:
+        return {"description": (statement or "").strip(), "entry_point": None, "example": None}
+    return {"description": m["description"].strip(), "entry_point": m["entry"], "example": m["example"].strip()}
+
+
+def task_option_label(task: dict, solved: set | list | None = None, width: int = 60) -> str:
+    """Подпись задачи в списке выбора: отметка о решении, имя функции и начало описания."""
+    done = "✅ " if task.get("task_id") in (solved or ()) else ""
+    desc = parse_statement(task.get("statement", ""))["description"]
+    if len(desc) > width:
+        desc = desc[: width - 1].rstrip() + "…"
+    name = task.get("entry_point") or task.get("task_id", "")
+    return f"{done}{name}: {desc}" if desc else f"{done}{name}"
+
+
+def solved_summary(solved, total: int) -> str:
+    return f"Решено {len(set(solved or []))} из {total}"
+
+
+def bug_type_label(bug_type: str | None) -> str:
+    return BUG_TYPE_LABELS.get(bug_type or "", bug_type or "другое")
 
 
 def category_label(category: str | None) -> str:
@@ -86,6 +128,43 @@ def pipeline_line(timings: list[dict] | None) -> str:
     """Путь хода по узлам графа с временем, например: «Профиль из памяти 0.00 с → Проверка кода 0.41 с»."""
     steps = [t for t in (timings or []) if t.get("node") != "finish"]
     return " → ".join(f"{node_label(t.get('node', ''))} {t.get('seconds', 0):.2f} с" for t in steps)
+
+
+def step_line(event: dict) -> str:
+    """Строка о завершённом шаге хода для индикатора прогресса."""
+    return f"✅ {node_label(event.get('node', ''))}: {event.get('seconds', 0):.2f} с"
+
+
+def parse_stream_line(line) -> dict | None:
+    """Одна строка потока /chat/stream (NDJSON) в событие; пустые и битые строки пропускаются (None)."""
+    if isinstance(line, bytes):
+        line = line.decode("utf-8", errors="replace")
+    line = (line or "").strip()
+    if not line:
+        return None
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return None
+    return event if isinstance(event, dict) and "type" in event else None
+
+
+def attempts_table(chat: list[dict]) -> list[dict]:
+    """Попытки студента: каждое сообщение с кодом и вердикт проверки, который за ним последовал."""
+    rows = []
+    for i, item in enumerate(chat):
+        if item.get("role") != "user" or not item.get("code"):
+            continue
+        reply = chat[i + 1] if i + 1 < len(chat) and chat[i + 1].get("role") == "assistant" else {}
+        d = reply.get("details") or {}
+        v = verdict_info(d.get("verdict"))
+        rows.append({
+            "№": len(rows) + 1,
+            "Задача": (d.get("task") or {}).get("task_id", ""),
+            "Результат": f"{v['icon']} {v['text']}" if v else "нет ответа",
+            "Время, с": round(d.get("total_seconds", 0), 1) if d else None,
+        })
+    return rows
 
 
 def connection_error_text(kind: str, base_url: str) -> str:

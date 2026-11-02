@@ -3,13 +3,20 @@
 """
 from frontend.helpers import (
     api_error_text,
+    attempts_table,
+    bug_type_label,
     category_label,
     chat_to_markdown,
     clamp_hint,
     hint_text,
     history_to_chat,
+    parse_statement,
+    parse_stream_line,
     pipeline_line,
     slowest_step,
+    solved_summary,
+    step_line,
+    task_option_label,
     timings_table,
     verdict_info,
 )
@@ -51,6 +58,69 @@ def test_pipeline_line_skips_finish():
                           {"node": "finish", "seconds": 0.0}])
     assert line == "Проверка кода 0.50 с → Ответ тьютора 1.25 с"
     assert pipeline_line(None) == ""
+
+
+STATEMENT = ("Write a function to count occurrence of a character in a string. "
+             "Функция должна называться count_char. Пример проверки: assert count_char(\"Python\",'o')==1")
+
+
+def test_parse_statement_splits_bank_format():
+    p = parse_statement(STATEMENT)
+    assert p["description"] == "Write a function to count occurrence of a character in a string."
+    assert p["entry_point"] == "count_char"
+    assert p["example"] == "assert count_char(\"Python\",'o')==1"
+
+
+def test_parse_statement_keeps_unknown_format():
+    p = parse_statement("Напишите функцию strlen(s).")
+    assert p == {"description": "Напишите функцию strlen(s).", "entry_point": None, "example": None}
+    assert parse_statement("")["description"] == ""
+
+
+def test_task_option_label():
+    task = {"task_id": "mbpp/666", "entry_point": "count_char", "statement": STATEMENT}
+    assert task_option_label(task).startswith("count_char: Write a function")
+    assert task_option_label(task, {"mbpp/666"}).startswith("✅ count_char")
+    assert task_option_label(task, width=20).count("…") == 1
+
+
+def test_solved_summary_and_bug_labels():
+    assert solved_summary(["a", "b", "a"], 40) == "Решено 2 из 40"
+    assert solved_summary(None, 5) == "Решено 0 из 5"
+    assert bug_type_label("syntax") == "синтаксическая ошибка"
+    assert bug_type_label("новый") == "новый" and bug_type_label(None) == "другое"
+
+
+def test_parse_stream_line():
+    assert parse_stream_line(b'{"type": "step", "node": "check", "seconds": 0.5}\n')["node"] == "check"
+    assert parse_stream_line('{"type": "result", "data": {"reply": "ок"}}')["data"]["reply"] == "ок"
+    assert parse_stream_line("") is None and parse_stream_line(b"  ") is None
+    assert parse_stream_line("не json") is None and parse_stream_line('{"без": "типа"}') is None
+    assert parse_stream_line("[1, 2]") is None
+
+
+def test_step_line():
+    assert step_line({"node": "check", "seconds": 2.345}) == "✅ Проверка кода: 2.35 с"
+
+
+def test_attempts_table_pairs_code_with_verdict():
+    chat = [
+        {"role": "user", "text": "привет"},
+        {"role": "assistant", "text": "здравствуйте"},
+        {"role": "user", "text": "проверьте", "code": "x"},
+        {"role": "assistant", "text": "нет", "details": {"verdict": {"passed": False}, "total_seconds": 3.44,
+                                                         "task": {"task_id": "mbpp/99"}}},
+        {"role": "user", "text": "проверьте", "code": "y"},
+        {"role": "assistant", "text": "да", "details": {"verdict": {"passed": True}, "total_seconds": 1.0,
+                                                        "task": {"task_id": "mbpp/99"}}},
+        {"role": "user", "text": "ещё", "code": "z"},
+    ]
+    rows = attempts_table(chat)
+    assert [r["№"] for r in rows] == [1, 2, 3]
+    assert rows[0]["Результат"] == "❌ Тесты не прошли" and rows[0]["Время, с"] == 3.4
+    assert rows[1]["Результат"] == "✅ Тесты прошли" and rows[1]["Задача"] == "mbpp/99"
+    assert rows[2]["Результат"] == "нет ответа"
+    assert attempts_table([]) == []
 
 
 def test_api_error_text():
