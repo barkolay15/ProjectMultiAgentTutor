@@ -144,6 +144,6 @@ tests/         тесты без ключей и без сети
 |---|---|
 | Дружаев Н. (капитан) | [@barkolay15](https://github.com/barkolay15) |
 | Днепровский Е. | [@MrHantur](https://github.com/MrHantur) |
-| Рафиков Т. | _добавить_ |
+| Рафиков Т. | [@RafikovTimur2008](https://github.com/RafikovTimur2008) |
 | Никитенко Л. | [@somedevila](https://github.com/somedevila) |
 | Шевченко О. | [@LilUserTen](https://github.com/LilUserTen) |
