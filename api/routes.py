@@ -5,10 +5,11 @@ import logging
 import os
 import threading
 from collections import deque
+from pathlib import Path as FilePath
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(FilePath(__file__).resolve().parents[1] / ".env")
 
 from fastapi import APIRouter, HTTPException, Path
 from fastapi.responses import StreamingResponse
