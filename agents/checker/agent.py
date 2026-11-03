@@ -12,6 +12,7 @@ analyze(request, llm, stats=None) -> (CheckVerdict, ErrorAnalysis | None)
 Если передать словарь stats, агент заполнит его для замера качества (benchmarks/eval_checker.py):
   llm_calls, tool_called_by_model, json_valid_first_try, no_code_first_try, retries.
 """
+import logging
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
@@ -23,6 +24,7 @@ from schemas.messages import CheckRequest, CheckVerdict, ErrorAnalysis, parse_re
 
 MAX_STEPS = 4      # лимит шагов цикла (защита от бесконечных вызовов)
 MAX_RETRIES = 2    # сколько раз просим модель исправить невалидный ответ
+log = logging.getLogger(__name__)
 
 
 @tool
@@ -50,7 +52,12 @@ def _analysis_problem(analysis: ErrorAnalysis, task_id: str) -> str | None:
 def analyze(request: CheckRequest, llm, stats: dict | None = None) -> tuple[CheckVerdict, ErrorAnalysis | None]:
     st = stats if stats is not None else {}
     st.update(llm_calls=0, tool_called_by_model=False, retries=0)
-    model = llm.bind_tools([run_tests])
+    try:
+        model = llm.bind_tools([run_tests])
+    except Exception as exc:
+        st["llm_error"] = type(exc).__name__
+        log.warning("Checker model unavailable: %s", st["llm_error"])
+        return check(request), None
     messages = [
         SystemMessage(content=CHECKER_SYSTEM_PROMPT),
         HumanMessage(content=request.model_dump_json()),
@@ -59,8 +66,13 @@ def analyze(request: CheckRequest, llm, stats: dict | None = None) -> tuple[Chec
     retries = 0
 
     for _ in range(MAX_STEPS):
-        ai = model.invoke(messages)
         st["llm_calls"] += 1
+        try:
+            ai = model.invoke(messages)
+        except Exception as exc:
+            st["llm_error"] = type(exc).__name__
+            log.warning("Checker model unavailable: %s", st["llm_error"])
+            return verdict if verdict is not None else check(request), None
         messages.append(ai)
 
         if ai.tool_calls:

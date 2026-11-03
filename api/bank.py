@@ -9,6 +9,7 @@ from functools import lru_cache
 
 from agents.checker.sandbox import DATASETS, load_tasks
 from api.starter import make_starter
+from core.examples import example_from_test
 from schemas.messages import Task
 
 TOPIC = "mbpp"
@@ -44,7 +45,11 @@ def _visible(task_id: str) -> bool:
 
 
 def _as_task(t: dict) -> Task:
-    return Task(task_id=t["task_id"], statement=t["statement"], topic=TOPIC)
+    return Task(task_id=t["task_id"], statement=t["statement"], topic=TOPIC, example=_example(t))
+
+
+def _example(t: dict) -> dict | None:
+    return next((example for test in t.get("tests", []) if (example := example_from_test(test))), None)
 
 
 def all_tasks() -> list[Task]:
@@ -67,7 +72,7 @@ def public_list() -> list[dict]:
         if not _visible(tid):
             continue
         item = {"task_id": tid, "entry_point": t.get("entry_point", ""), "statement": t["statement"],
-                "starter": _starters().get(tid, "")}
+                "starter": _starters().get(tid, ""), "example": _example(t)}
         if t.get("difficulty"):
             item["difficulty"] = t["difficulty"]
         out.append(item)

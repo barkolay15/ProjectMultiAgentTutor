@@ -7,6 +7,8 @@ from langchain_core.messages import AIMessage
 
 from agents.checker.agent import analyze, looks_like_solution
 from schemas.messages import CheckRequest
+from unittest.mock import Mock
+from httpx import ConnectTimeout
 
 WRONG = "def sum_even(numbers):\n    return sum(numbers)"
 RIGHT = "def sum_even(numbers):\n    return sum(x for x in numbers if x % 2 == 0)"
@@ -106,6 +108,39 @@ def test_looks_like_solution():
     assert looks_like_solution("return x + 1")
     assert looks_like_solution("```py\nprint(1)\n```")
     assert not looks_like_solution("Код суммирует все числа, а нужны только чётные.")
+
+
+def test_connection_failure_still_runs_real_tests():
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = ConnectTimeout("model unavailable")
+    for code, passed in [(RIGHT, True), (WRONG, False)]:
+        stats = {}
+        verdict, result = analyze(REQ(code), llm, stats)
+        assert verdict.passed is passed and result is None
+        assert stats["llm_error"] == "ConnectTimeout"
+        assert stats["llm_calls"] == 1
+
+
+def test_connection_failure_after_tool_preserves_existing_verdict(monkeypatch):
+    import agents.checker.agent as agent
+    real_check = agent.check
+    checked = Mock(side_effect=real_check)
+    monkeypatch.setattr(agent, "check", checked)
+    llm = Mock()
+    llm.bind_tools.return_value = llm
+    llm.invoke.side_effect = [tool_call(), ConnectTimeout("model unavailable")]
+    verdict, result = analyze(REQ(WRONG), llm)
+    assert not verdict.passed and result is None
+    assert checked.call_count == 1
+
+
+def test_tool_binding_failure_still_runs_real_tests():
+    llm = Mock()
+    llm.bind_tools.side_effect = RuntimeError("tools unavailable")
+    verdict, result = analyze(REQ(RIGHT), llm)
+    assert verdict.passed and result is None
+    llm.invoke.assert_not_called()
 
 
 if __name__ == "__main__":

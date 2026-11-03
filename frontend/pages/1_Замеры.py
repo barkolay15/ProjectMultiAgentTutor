@@ -1,6 +1,6 @@
 """Страница «Замеры»: результаты benchmarks/eval_checker.py (правило без модели и GigaChat).
 
-Streamlit сам добавляет файлы из frontend/pages в меню слева, так что app.py трогать не нужно.
+Страница подключена к меню слева через st.navigation в frontend/app.py.
 Данные берутся из benchmarks/results/checker_*.json (папка в .gitignore: сначала запустите замер).
 Другую папку можно задать переменной TUTOR_RESULTS_DIR.
 """

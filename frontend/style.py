@@ -7,13 +7,19 @@ import streamlit as st
 
 _CSS = """
 <style>
-.block-container { padding-top: 2.2rem; max-width: 1200px; }
+.block-container { padding-top: 1.2rem; max-width: 1400px; }
 footer { visibility: hidden; }
 [data-testid="stAppDeployButton"], .stDeployButton { display: none; }
 [data-testid="stChatMessage"] { border-radius: 14px; padding: 0.8rem 1rem; }
 [data-testid="stVerticalBlockBorderWrapper"] { border-radius: 14px; }
 [data-testid="stSidebar"] .block-container { padding-top: 1.2rem; }
-h1 { letter-spacing: -0.01em; }
+[data-testid="stMain"] h1 { letter-spacing: -0.01em; font-size: 2rem; }
+@media (max-width: 1000px) {
+    .st-key-workspace [data-testid="stHorizontalBlock"]:has(h4) { flex-direction: column-reverse; }
+    .st-key-workspace [data-testid="stHorizontalBlock"]:has(h4) > [data-testid="stColumn"] {
+        width: 100%; flex: 1 1 100%; min-width: 0;
+    }
+}
 </style>
 """
 

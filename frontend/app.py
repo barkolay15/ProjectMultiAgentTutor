@@ -1,4 +1,4 @@
-"""Интерфейс репетитора (Streamlit): слева условие и чат, справа редактор кода и результат проверки.
+"""Интерфейс репетитора (Streamlit): условие сверху, затем чат и редактор с результатом проверки.
 
 Запуск из корня репозитория (бэкенд должен работать: uvicorn api.main:app --reload):
     streamlit run frontend/app.py
@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # чтобы р
 import pandas as pd
 import streamlit as st
 
+from core.examples import example_from_test
 from frontend.client import ApiError, TutorClient
 from frontend.editor import code_editor
 from frontend.helpers import (
@@ -25,6 +26,7 @@ from frontend.helpers import (
     category_label,
     chat_to_markdown,
     clamp_hint,
+    failed_test_details,
     hint_text,
     history_to_chat,
     next_unsolved,
@@ -35,8 +37,10 @@ from frontend.helpers import (
     starter_for,
     status_label,
     step_line,
+    task_option_label,
     task_rows,
     timings_table,
+    turn_error_text,
     verdict_info,
 )
 from frontend.style import apply_style
@@ -47,11 +51,22 @@ AVATARS = {"user": "🧑‍💻", "assistant": "🧑‍🏫"}
 st.set_page_config(page_title="Репетитор по Python", page_icon="🐍", layout="wide")
 apply_style()
 
+page = st.navigation([
+    st.Page(lambda: None, title="Репетитор", icon="🐍", default=True),
+    st.Page("pages/1_Замеры.py", title="Замеры", icon="📊"),
+])
+page.run()
+if page.title != "Репетитор":
+    st.stop()
+
 state = st.session_state
 state.setdefault("chats", {})   # student_id -> сообщения чата
 state.setdefault("last", {})    # student_id -> последний ответ API (задача, вердикт, подсказка)
 state.setdefault("solved", {})  # student_id -> id решённых задач
 state.setdefault("editor", {})  # student_id -> {"ver": номер поля, "seed": начальный код, "task_id": задача}
+state.setdefault("drafts", {})  # student_id -> task_id -> код (в пределах сессии браузера)
+state.setdefault("results", {})  # student_id -> task_id -> последний результат и проверенный код
+state.setdefault("failed_requests", {})
 
 
 @st.cache_data(ttl=3, show_spinner=False)
@@ -73,18 +88,51 @@ def reset_editor(student_id: str, seed: str = "", task_id: str | None = None) ->
     ed["ver"] += 1
     ed["seed"] = seed
     ed["task_id"] = task_id
+    state.drafts.setdefault(student_id, {})[task_id] = seed
 
 
-def take_task(student_id: str, task_id: str, starter: str = "") -> None:
-    """Студент выбрал задачу: сервер запоминает её, в редакторе появляется заготовка функции.
+def remember_editor(student_id: str) -> None:
+    ed = state.editor.get(student_id)
+    if ed:
+        code = state.get(f"code_{student_id}_{ed['ver']}", ed["seed"])
+        if isinstance(code, str):
+            state.drafts.setdefault(student_id, {})[ed["task_id"]] = code
+
+
+def take_task(student_id: str, task_id: str, starter: str = "") -> bool:
+    """Студент выбрал задачу: сервер запоминает её, редактор восстанавливает черновик или заготовку.
     Работает и как on_click (до перерисовки страницы), поэтому берёт всё из аргументов и состояния."""
+    remember_editor(student_id)
     try:
         data = TutorClient(state.get("api_url", DEFAULT_API_URL)).set_task(student_id, task_id)
     except ApiError as e:
         state["flash"] = e.message
-        return
+        return False
     state.last[student_id] = {"task": data["task"], "hint_level": 1}
-    reset_editor(student_id, data.get("starter") or starter, task_id)
+    seed = state.drafts.get(student_id, {}).get(task_id, data.get("starter") or starter)
+    reset_editor(student_id, seed, task_id)
+    state.failed_requests.pop(student_id, None)
+    return True
+
+
+def open_task_picker() -> None:
+    state["dlg"] = state.get("dlg", 0) + 1
+    state["task_picker_open"] = True
+
+
+def close_task_picker() -> None:
+    state["task_picker_open"] = False
+
+
+def render_task_example(task: dict) -> None:
+    example = task.get("example") or example_from_test(parse_statement(task.get("statement", ""))["example"] or "")
+    if example:
+        st.caption("Пример")
+        inputs, expected = st.columns(2)
+        inputs.caption("Входные данные")
+        inputs.code(example["input"], language="python", wrap_lines=True)
+        expected.caption("Ожидаемый результат")
+        expected.code(example["output"], language="python", wrap_lines=True)
 
 
 # ---------------------------------------------------------------- боковая панель, часть 1
@@ -94,8 +142,8 @@ client = TutorClient(api_url)
 
 with st.sidebar:
     st.title("🐍 Репетитор")
-    student_id = st.text_input("Ваше имя", value="s1", key="student_id",
-                               help="Под этим именем сохраняются ваш диалог и прогресс.").strip() or "s1"
+    student_id = st.text_input("ID студента", value="s1", key="student_id", max_chars=64,
+                               help="Идентификатор сессии: буквы, цифры, точка, дефис и подчёркивание. Под ним сохраняются диалог и прогресс.").strip() or "s1"
     if api_ok:
         st.markdown(":green[● Сервис на связи]")
     else:
@@ -124,10 +172,12 @@ bank = bank_tasks(api_url) if bank_ok else []
 task_now = (last or {}).get("task") or {}
 task_id_now = task_now.get("task_id")
 
-# в редакторе всегда заготовка текущей задачи (если задачу выдал сам репетитор, подставляем её здесь)
+# Если задачу выдал репетитор, восстанавливаем её черновик или подставляем заготовку.
 ed = state.editor.setdefault(student_id, {"ver": 0, "seed": "", "task_id": None})
 if task_id_now and ed.get("task_id") != task_id_now:
-    reset_editor(student_id, starter_for(bank, task_id_now), task_id_now)
+    remember_editor(student_id)
+    seed = state.drafts.get(student_id, {}).get(task_id_now, starter_for(bank, task_id_now))
+    reset_editor(student_id, seed, task_id_now)
     ed = state.editor[student_id]
 
 # ---------------------------------------------------------------- боковая панель, часть 2
@@ -146,10 +196,14 @@ with st.sidebar:
                 client.reset(student_id)
             except ApiError as e:
                 state["flash"] = e.message
-            state.chats.pop(student_id, None)
-            state.last.pop(student_id, None)
-            state.solved.pop(student_id, None)
-            reset_editor(student_id)
+            else:
+                state.chats.pop(student_id, None)
+                state.last.pop(student_id, None)
+                state.solved.pop(student_id, None)
+                state.drafts.pop(student_id, None)
+                state.results.pop(student_id, None)
+                state.failed_requests.pop(student_id, None)
+                reset_editor(student_id)
             st.rerun()
 
     st.download_button("Скачать диалог (.md)", data=chat_to_markdown(chat, student_id),
@@ -177,27 +231,49 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------- отрисовка
-@st.dialog("Список задач", width="large")
+@st.dialog("Выбор задачи", width="large", on_dismiss=close_task_picker)
 def task_dialog(student_id: str, bank: list[dict], solved: list, nonce: int) -> None:
-    left, right = st.columns([3, 2])
-    query = left.text_input("Поиск", placeholder="Название функции или слово из описания", key="task_query")
-    label = right.radio("Показывать", list(STATUS_FILTERS), horizontal=True, key="task_filter")
+    query = st.text_input("Найти задачу", placeholder="Название функции, текст условия или ID", key="task_query")
+    label = st.radio("Показывать", list(STATUS_FILTERS), horizontal=True, key="task_filter")
     rows = task_rows(bank, solved, query, STATUS_FILTERS[label])
+    st.caption(f"Найдено {len(rows)} из {len(bank)} · Выберите задачу слева, чтобы прочитать условие.")
     if not rows:
-        st.info("Ничего не найдено. Измените поиск или фильтр.")
+        st.info("По вашему запросу задач нет. Попробуйте другое слово или переключите фильтр на «Все».")
         return
-    with_difficulty = any(r["difficulty"] for r in rows)
-    table = pd.DataFrame([
-        {"": r["mark"], "Задача": r["name"], **({"Сложность": r["difficulty"]} if with_difficulty else {}),
-         "Описание": r["description"]} for r in rows])
-    event = st.dataframe(table, hide_index=True, height=380, on_select="rerun",
-                         selection_mode="single-row", key=f"task_table_{nonce}")
-    st.caption("Нажмите на строку, чтобы взять задачу.")
-    picked = event.selection.rows
-    if picked:
-        task_id = rows[picked[0]]["task_id"]
-        take_task(student_id, task_id, starter_for(bank, task_id))
-        st.rerun()
+    by_id = {t["task_id"]: t for t in bank}
+    ids = [row["task_id"] for row in rows]
+    current = (state.last.get(student_id, {}).get("task") or {}).get("task_id")
+    left, right = st.columns([2, 3], gap="large")
+    with left.container(height=360, border=True):
+        selected = st.radio("Задачи", ids, index=ids.index(current) if current in ids else 0,
+                            format_func=lambda tid: task_option_label(by_id[tid], solved, width=42),
+                            key=f"task_choice_{student_id}_{nonce}", label_visibility="collapsed")
+    with right:
+        task = by_id[selected]
+        parts = parse_statement(task.get("statement", ""))
+        st.markdown(f"#### {task.get('entry_point') or parts['entry_point'] or selected}")
+        tags = ["Решена" if selected in solved else "Ещё не решена"]
+        if selected == current:
+            tags.append("Текущая задача")
+        draft = state.drafts.get(student_id, {}).get(selected)
+        if draft is not None and draft != task.get("starter", ""):
+            tags.append("Есть черновик")
+        if task.get("difficulty"):
+            tags.append(f"Сложность: {task['difficulty']}")
+        st.caption(" · ".join(tags))
+        st.write(parts["description"])
+        render_task_example(task)
+        if task.get("starter"):
+            with st.expander("Заготовка функции"):
+                st.code(task["starter"], language="python")
+        button = "Вернуться к решению" if selected == current else ("Продолжить решение" if draft is not None else "Начать решение")
+        if st.button(button, type="primary", key="confirm_task", use_container_width=True):
+            if selected == current or take_task(student_id, selected, task.get("starter", "")):
+                close_task_picker()
+                st.rerun()
+            if error := state.pop("flash", None):
+                st.error(error)
+        st.caption("При смене задачи ваш текущий черновик сохранится.")
 
 
 def render_agent_details(d: dict) -> None:
@@ -233,7 +309,10 @@ def render_agent_details(d: dict) -> None:
 
 def render_message(item: dict) -> None:
     with st.chat_message(item["role"], avatar=AVATARS[item["role"]]):
-        st.write(item["text"])
+        if item.get("service_error"):
+            st.warning(item["text"])
+        else:
+            st.write(item["text"])
         if item.get("code"):
             st.code(item["code"], language="python")
         d = item.get("details")
@@ -279,9 +358,13 @@ def ask(message: str, code: str | None) -> dict:
     return data
 
 
-def send(message: str, code: str | None = None) -> None:
+def send(message: str, code: str | None = None, retry: bool = False) -> None:
     """Отправляет ход в API: сразу показывает вопрос студента, ждёт ответ и обновляет страницу."""
-    chat.append({"role": "user", "text": message, "code": code})
+    state.failed_requests.pop(student_id, None)
+    if retry and chat and chat[-1].get("service_error"):
+        chat.pop()
+    else:
+        chat.append({"role": "user", "text": message, "code": code})
     with st.chat_message("user", avatar=AVATARS["user"]):
         st.write(message)
         if code:
@@ -289,50 +372,59 @@ def send(message: str, code: str | None = None) -> None:
     with st.chat_message("assistant", avatar=AVATARS["assistant"]):
         try:
             data = ask(message, code)
-            chat.append({"role": "assistant", "text": data["reply"], "details": data})
+            incomplete = data.get("status") != "ok"
+            chat.append({"role": "assistant", "text": data["reply"], "details": data,
+                         "service_error": incomplete})
             state.last[student_id] = data
             state.solved[student_id] = data.get("solved", solved)
+            result_task_id = (data.get("task") or {}).get("task_id", task_id_now)
+            if data.get("verdict") is not None:
+                state.results.setdefault(student_id, {})[result_task_id] = {"data": data, "code": code}
+            elif incomplete:
+                state.failed_requests[student_id] = {"message": message, "code": code,
+                    "task_id": result_task_id, "error": turn_error_text(data), "details": data.get("errors", [])}
         except ApiError as e:
-            st.error(e.message)
-            chat.append({"role": "assistant", "text": e.message})
+            state.failed_requests[student_id] = {"message": message, "code": code,
+                                                "task_id": task_id_now, "error": e.message}
+            chat.append({"role": "assistant", "text": e.message, "service_error": True})
     st.rerun()
 
 
 def render_task_panel() -> None:
     with st.container(border=True):
+        title, actions = st.columns([3, 2], vertical_alignment="center")
+        with actions:
+            if bank:
+                c1, c2 = st.columns(2)
+                c1.button("Список задач", key="open_tasks", on_click=open_task_picker)
+                nxt = next_unsolved(bank, solved, task_id_now)
+                c2.button("Следующая задача →", key="next_task", disabled=nxt is None,
+                          help="Все задачи решены." if nxt is None else None,
+                          on_click=take_task, args=(student_id, nxt or "", starter_for(bank, nxt)))
         if task_now:
             parts = parse_statement(task_now["statement"])
             done = task_id_now in solved
-            st.markdown(f"#### {parts['entry_point'] or task_id_now}" + ("  :green[Решено ✅]" if done else ""))
+            bank_task = next((t for t in bank if t["task_id"] == task_id_now), {})
+            name = parts["entry_point"] or bank_task.get("entry_point") or task_id_now.rsplit("/", 1)[-1]
+            title.markdown(f"#### {name}" + ("  :green[Решено ✅]" if done else ""))
             st.write(parts["description"])
-            if parts["example"]:
-                st.caption("Пример проверки")
-                st.code(parts["example"], language="python")
+            render_task_example(bank_task or task_now)
             v = verdict_info((last or {}).get("verdict"))
             if last and not done and not (v and v["kind"] == "pass"):
                 level = clamp_hint(last.get("hint_level", 1))
                 st.progress(level / MAX_HINT, text=hint_text(level))
         else:
-            st.markdown("#### Выберите задачу")
+            title.markdown("#### Выберите задачу")
             st.caption("Откройте список задач или просто напишите репетитору: он выдаст задачу сам."
                        if bank else "Напишите репетитору, например «Не понимаю задачу»: он выдаст задачу.")
-        if bank:
-            c1, c2 = st.columns(2)
-            if c1.button("Список задач", key="open_tasks"):
-                state["dlg"] = state.get("dlg", 0) + 1
-                task_dialog(student_id, bank, solved, state["dlg"])
-            nxt = next_unsolved(bank, solved, task_id_now)
-            c2.button("Следующая задача →", key="next_task", disabled=nxt is None,
-                      help="Все задачи решены." if nxt is None else None,
-                      on_click=take_task, args=(student_id, nxt or "", starter_for(bank, nxt)))
 
 
 def render_chat() -> str | None:
     """Сообщения диалога; для пустого чата приветствие и кнопки-подсказки. Возвращает нажатую кнопку."""
     quick = None
     if not chat:
-        st.markdown("**Привет! Я помогу разобраться с задачей, но готовый код не дам.**")
-        st.caption("Спросите, с чего начать, или попросите подсказку.")
+        with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+            st.write("Задача выбрана. Напишите решение справа или спросите меня, с чего начать.")
         cols = st.columns(len(EXAMPLE_PROMPTS))
         for col, prompt in zip(cols, EXAMPLE_PROMPTS):
             if col.button(prompt, key=f"quick_{prompt}", disabled=not api_ok):
@@ -342,27 +434,85 @@ def render_chat() -> str | None:
     return quick
 
 
-def render_result() -> None:
+def render_result(code: str) -> bool:
     with st.container(border=True):
-        v = verdict_info((last or {}).get("verdict"))
+        failed = state.failed_requests.get(student_id)
+        if failed and failed["task_id"] == task_id_now:
+            st.warning("Не удалось выполнить проверку" if failed.get("code") else "Не удалось получить ответ")
+            st.write(failed["error"])
+            if failed.get("details"):
+                with st.expander("Подробности ошибки"):
+                    st.code("\n".join(failed["details"]), language="text")
+            st.caption("Код в редакторе сохранён. Повтор отправит исходный запрос.")
+            return st.button("Повторить запрос", key="retry_request", disabled=not api_ok)
+        record = state.results.get(student_id, {}).get(task_id_now)
+        data = record["data"] if record else {}
+        v = verdict_info(data.get("verdict"))
         if not v:
             st.caption("Здесь появится результат проверки. Нажмите «Проверить решение».")
-            return
+            return False
+        if record["code"] != code:
+            st.info("Код изменён после проверки. Ниже — результат предыдущего варианта.")
         if v["kind"] == "pass":
             st.success("✅ Все тесты прошли")
         else:
             st.error("❌ Тесты не прошли")
-            failed = last["verdict"].get("failed_tests") or []
-            if failed:
+            detail = failed_test_details(data["verdict"])
+            if detail:
                 st.caption("Первый проваленный тест")
-                st.code(failed[0], language="python")
-            a = last.get("analysis")
+                if detail["call"]:
+                    st.code(detail["call"], language="python")
+                    c1, c2 = st.columns(2)
+                    c1.caption("Ожидалось")
+                    c1.code(detail["expected"], language="python")
+                    c2.caption("Получено")
+                    c2.code(detail["got"] if detail["got"] is not None else "Результат не получен", language="python")
+                with st.expander("Подробности теста"):
+                    st.code(detail["test"], language="python")
+                    if not detail["call"] and detail["got"] is not None:
+                        st.text(f"Получено: {detail['got']}")
+                    if data["verdict"].get("traceback_short"):
+                        st.text(data["verdict"]["traceback_short"])
+            if data["verdict"].get("error_type") not in (None, "AssertionError"):
+                st.caption(f"Ошибка выполнения: {data['verdict']['error_type']}")
+            a = data.get("analysis")
             if a:
                 st.markdown(f"**Что не так:** {category_label(a['category'])}. {a['summary']}")
-        st.caption(f"{hint_text(last.get('hint_level', 1)) if v['kind'] == 'fail' else 'Задача решена'}"
-                   f" · {last.get('total_seconds', 0):.1f} с")
+        st.caption(f"{hint_text(data.get('hint_level', 1)) if v['kind'] == 'fail' else 'Задача решена'}"
+                   f" · {data.get('total_seconds', 0):.1f} с")
+        if data.get("status") != "ok":
+            st.warning("Тесты выполнены, но сервис не смог завершить ответ репетитора.")
+        elif any(str(e).startswith("review:") for e in data.get("errors", [])):
+            st.warning("Тесты выполнены, но разбор ошибки от модели недоступен.")
+        if data.get("errors"):
+            with st.expander("Подробности ошибки сервиса"):
+                st.code("\n".join(data["errors"]), language="text")
         if dev_mode:
-            render_agent_details(last)
+            render_agent_details(data)
+    return False
+
+
+def render_start_screen() -> tuple | None:
+    with st.container(border=True, key="start_screen"):
+        with st.chat_message("assistant", avatar=AVATARS["assistant"]):
+            st.markdown("### Привет! Давайте разберём задачу по Python")
+            st.write("Я помогу с ходом решения, объясню ошибки и дам подсказки. Начните с выбора задачи — затем откроются редактор кода и чат.")
+        if bank:
+            st.caption(f"Задач в банке: {len(bank)} · Решено: {len(set(solved))}")
+            choose, suggested = st.columns(2)
+            choose.button("Выбрать задачу", type="primary", key="open_tasks_start", use_container_width=True,
+                          on_click=open_task_picker)
+            first = next_unsolved(bank, solved)
+            if first:
+                suggested.button("Начать с первой нерешённой", key="start_first", use_container_width=True,
+                                 on_click=take_task, args=(student_id, first, starter_for(bank, first)))
+            else:
+                st.success("Все задачи решены. Выберите любую задачу, чтобы повторить её.")
+        else:
+            st.caption("Репетитор предложит задачу, с которой можно начать практику.")
+            if st.button("Получить задачу", type="primary", key="get_first_task", disabled=not api_ok):
+                return ("Предложи задачу по Python", None)
+    return None
 
 
 # ---------------------------------------------------------------- страница
@@ -375,38 +525,68 @@ if not api_ok:
     st.error("Сервис не отвечает, поэтому чат отключён. Запустите бэкенд (команда в боковой панели) "
              "и нажмите «Проверить связь».")
 
-left, right = st.columns([5, 6], gap="large")
-
-with left:
-    render_task_panel()
-    chat_box = st.container(height=440, border=True)
-    with chat_box:
-        quick = render_chat()
-    typed = st.chat_input("Спросите репетитора, например: «Дай подсказку»", disabled=not api_ok)
-
-with right:
-    st.markdown("#### Решение")
-    code = code_editor(f"code_{student_id}_{ed['ver']}", height=340, value=ed["seed"])
-    b1, b2 = st.columns([3, 2])
-    run_clicked = b1.button("▶ Проверить решение", type="primary", key="run",
-                            disabled=not api_ok or not code.strip())
-    b2.button("Сбросить код", key="reset_code", disabled=not task_id_now,
-              help="Вернуть заготовку функции", on_click=reset_editor,
-              args=(student_id, starter_for(bank, task_id_now), task_id_now))
-    render_result()
-
-    attempts = attempts_table(chat)
-    if attempts:
-        with st.expander(f"Мои попытки ({len(attempts)})"):
-            st.dataframe(pd.DataFrame(attempts), hide_index=True)
-
 pending = None
-if run_clicked:
-    pending = (CHECK_CODE_MESSAGE, code)
-elif typed:
-    pending = (typed, None)
-elif quick:
-    pending = (quick, None)
+if task_now:
+    render_task_panel()
+    with st.container(key="workspace"):
+        left, right = st.columns([5, 6], gap="large")
+
+    with left:
+        st.markdown("#### Обсуждение")
+        chat_box = st.container(height=360, border=True)
+        with chat_box:
+            quick = render_chat()
+        typed = st.chat_input("Спросите репетитора, например: «Дай подсказку»", disabled=not api_ok)
+        hint_clicked = st.button("Дай подсказку", key="hint", disabled=not api_ok or not task_id_now,
+                                help="Попросить подсказку по текущей задаче.")
+
+    with right:
+        st.markdown("#### Решение")
+        if f"code_{student_id}_{ed['ver']}" not in state:
+            ed["seed"] = state.drafts.get(student_id, {}).get(task_id_now, ed["seed"])
+        code = code_editor(f"code_{student_id}_{ed['ver']}", height=360, value=ed["seed"])
+        state.drafts.setdefault(student_id, {})[task_id_now] = code
+        b1, b2 = st.columns([3, 2])
+        run_clicked = b1.button("▶ Проверить решение", type="primary", key="run",
+                                disabled=not api_ok or not code.strip())
+        with b2.popover("Сбросить код", disabled=not task_id_now):
+            st.write("Заменить текущий черновик заготовкой функции?")
+            st.button("Да, сбросить код", key="reset_code", on_click=reset_editor,
+                      args=(student_id, starter_for(bank, task_id_now), task_id_now))
+        st.caption("Черновик сохраняется при смене задачи в этой сессии браузера.")
+        retry_clicked = render_result(code)
+
+        attempts = attempts_table(chat)
+        if attempts:
+            with st.expander(f"Мои попытки ({len(attempts)})"):
+                st.dataframe(pd.DataFrame(attempts), hide_index=True)
+
+    if run_clicked:
+        pending = (CHECK_CODE_MESSAGE, code)
+    elif typed:
+        pending = (typed, None)
+    elif quick:
+        pending = (quick, None)
+    elif hint_clicked:
+        pending = ("Дай подсказку по текущей задаче", None)
+    elif retry_clicked:
+        failed = state.failed_requests[student_id]
+        pending = (failed["message"], failed["code"], True)
+else:
+    pending = render_start_screen()
+    chat_box = st.container()
+    if chat:
+        with st.expander("Предыдущий диалог"):
+            for item in chat:
+                render_message(item)
+    if state.failed_requests.get(student_id, {}).get("task_id", "") is None:
+        if render_result(""):
+            failed = state.failed_requests[student_id]
+            pending = (failed["message"], failed["code"], True)
+
+if state.get("task_picker_open") and bank:
+    task_dialog(student_id, bank, solved, state["dlg"])
+
 if pending:
     with chat_box:
         send(*pending)
