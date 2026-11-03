@@ -23,8 +23,11 @@ def apply_style() -> None:
 
 
 def is_dark_theme() -> bool:
-    """Текущая тема Streamlit; у старых версий (до 1.46) считаем тему тёмной."""
+    """Начальная тема редактора; браузер уточняет её после загрузки страницы."""
     try:
-        return st.context.theme.type != "light"
+        theme = st.context.theme.type
+        if theme in ("light", "dark"):
+            return theme == "dark"
     except Exception:
-        return True
+        pass
+    return st.get_option("theme.base") == "dark"

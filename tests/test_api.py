@@ -34,6 +34,10 @@ def test_health_and_info():
     assert client.get("/health").json() == {"status": "ok"}
     info = client.get("/info").json()
     assert info["checker"] == "stub" and info["tutor"] in ("stub", "llm") and info["max_steps"] > 0
+    from agents.checker.prompts import PROMPT_VERSION
+    from core.llm_client import MODEL_NAME
+    assert info["checker_prompt_version"] == PROMPT_VERSION
+    assert info["model"] == (MODEL_NAME if info["tutor"] == "llm" else None)
 
 
 def test_chat_without_code_gives_task_but_no_verdict():

@@ -16,6 +16,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from api import bank
+from agents.checker.prompts import PROMPT_VERSION as CHECKER_PROMPT_VERSION
+from core.llm_client import MODEL_NAME
 from core.metrics import summarize
 from core.orchestrator import MAX_STEPS, Agents, run_turn, stream_turn
 from core.stubs import stub_agents
@@ -111,6 +113,8 @@ def info():
         "max_steps": MAX_STEPS,
         "bank": len(bank.all_tasks()),
         "demo": _demo_enabled(),
+        "model": MODEL_NAME if _real_checker or os.getenv("GIGACHAT_CREDENTIALS") else None,
+        "checker_prompt_version": CHECKER_PROMPT_VERSION,
     }
 
 
