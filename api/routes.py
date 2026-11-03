@@ -239,7 +239,7 @@ def choose_task(choice: TaskChoice, student_id: str = Path(min_length=1, max_len
     with _state_lock:
         sess = _sessions.setdefault(student_id, _new_session())
         sess.update(task=task, hint_level=1)
-    return {"task": task.model_dump(), "hint_level": 1}
+    return {"task": task.model_dump(), "hint_level": 1, "starter": bank.starter(task.task_id)}
 
 
 @router.get("/demo/{task_id:path}")

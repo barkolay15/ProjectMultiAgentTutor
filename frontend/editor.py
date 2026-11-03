@@ -45,15 +45,17 @@ _TAB_SCRIPT = """
 """
 
 
-def code_editor(key: str, height: int = 190) -> str:
+def code_editor(key: str, height: int = 190, value: str = "") -> str:
     """Возвращает текущий текст кода из поля ввода."""
     if st_ace is not None:
         try:
-            return st_ace(value="", language="python", theme="monokai" if is_dark_theme() else "github", keybinding="vscode",
-                          font_size=14, tab_size=4, height=height, auto_update=True, key=key) or ""
+            return st_ace(value=value, language="python",
+                          theme="monokai" if is_dark_theme() else "github",
+                          keybinding="vscode", font_size=14, tab_size=4,
+                          height=height, auto_update=True, key=key) or ""
         except Exception:  # несовместимая версия компонента: остаёмся на обычном поле
             pass
-    code = st.text_area("Код на Python", key=key, height=height,
+    code = st.text_area("Код на Python", key=key, value=value, height=height,
                         label_visibility="collapsed", placeholder=PLACEHOLDER)
     components.html(_TAB_SCRIPT, height=0)
     return code

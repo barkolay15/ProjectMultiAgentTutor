@@ -105,9 +105,12 @@ def test_task_bank_endpoints():
     tasks = client.get("/tasks").json()
     assert tasks and {"task_id", "entry_point", "statement"} <= set(tasks[0])
     assert all("tests" not in t for t in tasks)          # тесты студенту не отдаём
+    assert all(t["starter"].startswith("def ") and "pass" in t["starter"] for t in tasks)   # заготовка функции
+    assert not any(t["task_id"].startswith("stub/") for t in tasks)                        # служебные задачи скрыты
     tid = tasks[0]["task_id"]
     r = client.post("/session/api_g/task", json={"task_id": tid})
     assert r.status_code == 200 and r.json()["task"]["task_id"] == tid
+    assert r.json()["starter"] == tasks[0]["starter"]
     sess = client.get("/session/api_g").json()
     assert sess["task"]["task_id"] == tid and sess["hint_level"] == 1 and sess["solved"] == []
     assert client.post("/session/api_g/task", json={"task_id": "no/such"}).status_code == 404
