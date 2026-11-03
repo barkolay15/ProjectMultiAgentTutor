@@ -62,6 +62,48 @@ def task_option_label(task: dict, solved: set | list | None = None, width: int =
     return f"{done}{name}: {desc}" if desc else f"{done}{name}"
 
 
+def short_description(statement: str, width: int = 90) -> str:
+    desc = parse_statement(statement)["description"]
+    return desc if len(desc) <= width else desc[: width - 1].rstrip() + "…"
+
+
+STATUS_FILTERS = {"Все": "all", "Не решённые": "todo", "Решённые": "done"}
+
+
+def task_rows(bank: list[dict], solved=None, query: str = "", status: str = "all") -> list[dict]:
+    """Строки списка задач с поиском и фильтром по статусу (all, todo, done)."""
+    done = set(solved or [])
+    q = (query or "").strip().lower()
+    rows = []
+    for t in bank:
+        name = t.get("entry_point") or t.get("task_id", "")
+        desc = short_description(t.get("statement", ""))
+        is_done = t.get("task_id") in done
+        if (status == "done" and not is_done) or (status == "todo" and is_done):
+            continue
+        if q and q not in name.lower() and q not in desc.lower():
+            continue
+        rows.append({"task_id": t["task_id"], "mark": "✅" if is_done else "", "name": name,
+                     "description": desc, "difficulty": t.get("difficulty", "")})
+    return rows
+
+
+def next_unsolved(bank: list[dict], solved=None, current_id: str | None = None) -> str | None:
+    """Следующая нерешённая задача после текущей (по кругу); None, если нерешённых не осталось."""
+    done = set(solved or [])
+    ids = [t["task_id"] for t in bank]
+    start = ids.index(current_id) + 1 if current_id in ids else 0
+    for i in range(len(ids)):
+        tid = ids[(start + i) % len(ids)]
+        if tid not in done and tid != current_id:
+            return tid
+    return None
+
+
+def starter_for(bank: list[dict], task_id: str | None) -> str:
+    return next((t.get("starter", "") for t in bank if t.get("task_id") == task_id), "")
+
+
 def solved_summary(solved, total: int) -> str:
     return f"Решено {len(set(solved or []))} из {total}"
 

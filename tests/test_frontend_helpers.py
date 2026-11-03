@@ -10,13 +10,16 @@ from frontend.helpers import (
     clamp_hint,
     hint_text,
     history_to_chat,
+    next_unsolved,
     parse_statement,
     parse_stream_line,
     pipeline_line,
     slowest_step,
     solved_summary,
+    starter_for,
     step_line,
     task_option_label,
+    task_rows,
     timings_table,
     verdict_info,
 )
@@ -121,6 +124,36 @@ def test_attempts_table_pairs_code_with_verdict():
     assert rows[1]["Результат"] == "✅ Тесты прошли" and rows[1]["Задача"] == "mbpp/99"
     assert rows[2]["Результат"] == "нет ответа"
     assert attempts_table([]) == []
+
+
+BANK = [
+    {"task_id": "a/1", "entry_point": "count_char", "statement": STATEMENT, "starter": "def count_char(s, c):\n    pass\n"},
+    {"task_id": "a/2", "entry_point": "sum_even", "statement": "Напишите функцию sum_even(numbers).", "starter": "def sum_even(numbers):\n    pass\n"},
+    {"task_id": "a/3", "entry_point": "strlen", "statement": "Длина строки."},
+]
+
+
+def test_task_rows_search_and_status_filters():
+    assert [r["task_id"] for r in task_rows(BANK)] == ["a/1", "a/2", "a/3"]
+    assert [r["task_id"] for r in task_rows(BANK, query="COUNT")] == ["a/1"]
+    assert [r["task_id"] for r in task_rows(BANK, query="чётн")] == []
+    assert [r["task_id"] for r in task_rows(BANK, query="sum")] == ["a/2"]
+    assert [r["task_id"] for r in task_rows(BANK, solved=["a/2"], status="done")] == ["a/2"]
+    assert [r["task_id"] for r in task_rows(BANK, solved=["a/2"], status="todo")] == ["a/1", "a/3"]
+    assert task_rows(BANK, solved=["a/1"])[0]["mark"] == "✅" and task_rows(BANK)[0]["mark"] == ""
+
+
+def test_next_unsolved_wraps_and_skips_solved():
+    assert next_unsolved(BANK) == "a/1"
+    assert next_unsolved(BANK, ["a/1"], "a/1") == "a/2"
+    assert next_unsolved(BANK, ["a/3"], "a/2") == "a/1"          # по кругу, решённую пропускаем
+    assert next_unsolved(BANK, ["a/1", "a/2", "a/3"], "a/1") is None
+    assert next_unsolved([], None, None) is None
+
+
+def test_starter_for():
+    assert starter_for(BANK, "a/2").startswith("def sum_even")
+    assert starter_for(BANK, "a/3") == "" and starter_for(BANK, "нет") == "" and starter_for(BANK, None) == ""
 
 
 def test_api_error_text():
