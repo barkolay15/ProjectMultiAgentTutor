@@ -70,6 +70,8 @@ def evaluate(items: list[dict], tasks: dict, mode: str = "llm", llm=None,
                            summary=analysis.summary if analysis else None,
                            hint_for_tutor=analysis.hint_for_tutor if analysis else None,
                            analysis_ok=analysis is not None, **stats)
+                # Локальный вердикт сохраняется при сбое LLM, но для замера это ошибка модели.
+                row["error"] = stats.get("llm_error")
             row["verdict_error_type"] = verdict.error_type
         except Exception as e:      # сбой сети/лимит API не должен терять уже полученные результаты
             row["error"] = f"{type(e).__name__}: {e}"[:300]

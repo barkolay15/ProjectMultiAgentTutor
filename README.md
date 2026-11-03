@@ -120,14 +120,14 @@ CI (`.github/workflows/tests.yml`) запускает тесты и провер
 | `POST /chat/stream` | тот же запрос, что `/chat`; поток NDJSON: события `step`, затем `result` с ответом в `data` или `error` с полем `message` |
 | `GET /info` | режим проверяющего (`real` / `stub`), тьютора, модель (`model`, `null` без LLM), версия промпта проверяющего (`checker_prompt_version`), лимит шагов, размер банка и демо-режим |
 | `GET /session/{student_id}` | текущая задача, уровень подсказки, история диалога и список решённых задач |
-| `GET /tasks` | список задач банка без тестов и решений |
+| `GET /tasks` | список задач банка с заготовками и одним публичным примером `example` (`input`, `output`), без полного набора тестов и решений |
 | `POST /session/{student_id}/task` | выбрать задачу: JSON `{"task_id": "..."}`; ответ: `task`, `hint_level`, `starter`; неизвестная задача — 404 |
 | `GET /demo/{task_id}` | эталонное и неверные решения для показа; доступно при `TUTOR_DEMO=1`, иначе 404 |
 | `POST /reset/{student_id}` | сбросить сессию студента |
 | `GET /metrics` | p50, p95, error rate и число ходов с момента запуска |
 | `GET /health` | проверка, что сервис жив |
 
-Ответ `/chat` содержит `reply`, `hint_level`, `task`, `verdict`, `analysis`, `status`, `retries`, `errors`, `timings`, `total_seconds`, `solved` (список ID решённых задач). Документация FastAPI: `http://127.0.0.1:8000/docs`.
+Ответ `/chat` содержит `reply`, `hint_level`, `task`, `verdict`, `analysis`, `status`, `retries`, `errors`, `timings`, `total_seconds`, `solved` (список ID решённых задач). У задачи `task` есть необязательное поле `example` с входными данными `input` и ожидаемым результатом `output`; этот же пример возвращают выбор задачи и состояние сессии. Документация FastAPI: `http://127.0.0.1:8000/docs`.
 
 ## Структура
 

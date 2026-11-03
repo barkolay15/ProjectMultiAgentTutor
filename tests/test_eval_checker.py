@@ -41,6 +41,7 @@ def test_baseline_rules():
     mk = lambda et: CheckVerdict(task_id="t", passed=False, error_type=et)
     assert baseline_category(mk("SyntaxError")) == "syntax"
     assert baseline_category(mk("Timeout")) == "timeout"
+    assert baseline_category(mk("RuntimeCrash")) == "timeout"
     assert baseline_category(mk("AssertionError")) == "logic"
     assert baseline_category(mk("AttributeError")) == "runtime"
 
@@ -66,7 +67,30 @@ def test_errors_do_not_stop_the_run():
             raise RuntimeError("сеть упала")
     rows = evaluate(ITEMS, load_tasks(), mode="llm", llm=Broken(), log=lambda *_: None)
     assert len(rows) == 4 and all(r["error"] for r in rows)
+    assert all(r["error"] == "RuntimeError" for r in rows)
+    error_types = [r["verdict_error_type"] for r in rows]
+    assert error_types[:2] == ["AssertionError", "SyntaxError"]
+    # Лимит CPU в Linux может завершить процесс раньше таймаута subprocess.
+    assert error_types[2] in ("Timeout", "RuntimeCrash")
+    assert error_types[3] == "AssertionError"
     assert summarize(rows)["n_errors"] == 4
+
+
+def test_model_failure_after_tool_keeps_verdict_and_stats():
+    class BrokenAfterTool(FakeLLM):
+        def invoke(self, messages):
+            if self.step:
+                raise TimeoutError("модель не ответила")
+            return super().invoke(messages)
+
+    rows = evaluate(ITEMS, load_tasks(), mode="llm", llm=BrokenAfterTool(), limit=1, log=lambda *_: None)
+    row = rows[0]
+    assert row["error"] == "TimeoutError" and row["llm_error"] == "TimeoutError"
+    assert row["tool_called_by_model"] is True and row["llm_calls"] == 2
+    assert row["verdict_error_type"] == "AssertionError"
+    assert row["predicted"] is None and row["analysis_ok"] is False
+    summary = summarize(rows)
+    assert summary["n_errors"] == 1 and summary["category_accuracy"] is None
 
 
 if __name__ == "__main__":

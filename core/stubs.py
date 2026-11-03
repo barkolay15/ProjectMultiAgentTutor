@@ -26,6 +26,7 @@ def stub_agents() -> Agents:
             task_id="stub/strlen",
             statement="Напишите функцию strlen(s), которая возвращает длину строки.",
             topic=req.topic,
+            example={"input": "''", "output": "0"},
         )
 
     def check(req, err):                      # D: run_tests -> вердикт

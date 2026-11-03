@@ -3,6 +3,7 @@
 Здесь нет ни streamlit, ни сети, поэтому всё тестируется без запуска приложения
 (tests/test_frontend_helpers.py).
 """
+import ast
 import json
 import re
 
@@ -81,7 +82,8 @@ def task_rows(bank: list[dict], solved=None, query: str = "", status: str = "all
         is_done = t.get("task_id") in done
         if (status == "done" and not is_done) or (status == "todo" and is_done):
             continue
-        if q and q not in name.lower() and q not in desc.lower():
+        searchable = " ".join((name, t.get("task_id", ""), t.get("statement", ""))).lower()
+        if q and q not in searchable:
             continue
         rows.append({"task_id": t["task_id"], "mark": "✅" if is_done else "", "name": name,
                      "description": desc, "difficulty": t.get("difficulty", "")})
@@ -124,6 +126,22 @@ def status_label(status: str | None) -> str:
     return STATUS_LABELS.get(status or "", status or "неизвестно")
 
 
+def turn_error_text(data: dict) -> str:
+    """Пояснение сбоя по фактической диагностике оркестратора."""
+    errors = [str(e) for e in data.get("errors", [])]
+    error = next((e for e in errors if not e.startswith("review:")), errors[0] if errors else "")
+    if "ConnectTimeout" in error or "ConnectError" in error:
+        return "Не удалось подключиться к сервису модели. Проверьте сетевой доступ к GigaChat."
+    if "ReadTimeout" in error:
+        return "Сервис модели не ответил вовремя. Попробуйте ещё раз."
+    if error:
+        stage = error.split(":", 1)[0]
+        return f"Ошибка на этапе «{node_label(stage)}». Подробности доступны ниже."
+    if data.get("status") == "step_limit":
+        return "Достигнут лимит шагов обработки запроса. Попробуйте ещё раз."
+    return "Сервис не смог завершить запрос. Попробуйте ещё раз."
+
+
 def clamp_hint(level) -> int:
     try:
         return max(1, min(MAX_HINT, int(level)))
@@ -142,6 +160,26 @@ def verdict_info(verdict: dict | None) -> dict | None:
     if verdict.get("passed"):
         return {"kind": "pass", "icon": "✅", "text": "Тесты прошли", "color": "green"}
     return {"kind": "fail", "icon": "❌", "text": "Тесты не прошли", "color": "red"}
+
+
+def failed_test_details(verdict: dict) -> dict | None:
+    """Разбираем простой assert без выполнения кода; сложные проверки показываем целиком."""
+    details = verdict.get("failed_details") or []
+    tests = verdict.get("failed_tests") or []
+    first = details[0] if details else {}
+    test = first.get("test") or (tests[0] if tests else None)
+    if not test:
+        return None
+    result = {"test": test, "call": None, "expected": None, "got": first.get("got")}
+    try:
+        statement = ast.parse(test).body[0]
+        comparison = statement.test if isinstance(statement, ast.Assert) else None
+        if isinstance(comparison, ast.Compare) and len(comparison.ops) == 1 and isinstance(comparison.ops[0], ast.Eq):
+            expected = ast.literal_eval(comparison.comparators[0])
+            result.update(call=ast.get_source_segment(test, comparison.left), expected=repr(expected))
+    except (SyntaxError, ValueError, TypeError, IndexError):
+        pass
+    return result
 
 
 def timings_table(timings: list[dict] | None) -> list[dict]:

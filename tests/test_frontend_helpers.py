@@ -8,6 +8,7 @@ from frontend.helpers import (
     category_label,
     chat_to_markdown,
     clamp_hint,
+    failed_test_details,
     hint_text,
     history_to_chat,
     next_unsolved,
@@ -21,6 +22,7 @@ from frontend.helpers import (
     task_option_label,
     task_rows,
     timings_table,
+    turn_error_text,
     verdict_info,
 )
 
@@ -41,6 +43,20 @@ def test_verdict_info():
     assert verdict_info({"passed": True})["kind"] == "pass"
     bad = verdict_info({"passed": False})
     assert bad["kind"] == "fail" and bad["color"] == "red"
+
+
+def test_failed_test_details_uses_actual_result_and_literal_expected_value():
+    detail = failed_test_details({"failed_details": [{"test": "assert strlen('abc') == 3", "got": "0"}]})
+    assert detail == {"test": "assert strlen('abc') == 3", "call": "strlen('abc')", "expected": "3", "got": "0"}
+    assert failed_test_details({"failed_tests": ["assert f() == None"]})["expected"] == "None"
+
+
+def test_failed_test_details_does_not_evaluate_expressions():
+    detail = failed_test_details({"failed_tests": ["assert f(1) == dangerous()"]})
+    assert detail["call"] is None and detail["expected"] is None and detail["got"] is None
+    assert failed_test_details({"failed_tests": ["assert f(1) > 0"]})["call"] is None
+    assert failed_test_details({"failed_tests": ["invalid python!"]})["call"] is None
+    assert failed_test_details({}) is None
 
 
 def test_timings_table_shares_sum_to_about_100():
@@ -143,6 +159,12 @@ def test_task_rows_search_and_status_filters():
     assert task_rows(BANK, solved=["a/1"])[0]["mark"] == "✅" and task_rows(BANK)[0]["mark"] == ""
 
 
+def test_task_search_matches_full_statement_and_identifier():
+    bank = [{"task_id": "bank/long", "entry_point": "long_task", "statement": "Начало " * 30 + "редкоеслово"}]
+    assert task_rows(bank, query="редкоеслово")[0]["task_id"] == "bank/long"
+    assert task_rows(bank, query="BANK/LONG")[0]["task_id"] == "bank/long"
+
+
 def test_next_unsolved_wraps_and_skips_solved():
     assert next_unsolved(BANK) == "a/1"
     assert next_unsolved(BANK, ["a/1"], "a/1") == "a/2"
@@ -161,6 +183,12 @@ def test_api_error_text():
     assert "Подробности" in api_error_text(500, "Оркестратор не смог")
     assert "404" not in api_error_text(404) and "адрес" in api_error_text(404).lower()
     assert "418" in api_error_text(418)
+
+
+def test_turn_error_text_uses_backend_diagnostics():
+    assert "GigaChat" in turn_error_text({"errors": ["check: ConnectTimeout: unavailable"]})
+    assert "Проверка кода" in turn_error_text({"errors": ["check: ValueError: invalid"]})
+    assert "лимит шагов" in turn_error_text({"status": "step_limit"})
 
 
 def test_history_to_chat_maps_roles_and_skips_unknown():

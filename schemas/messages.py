@@ -74,11 +74,17 @@ class TaskRequest(BaseModel):
     level: Literal["beginner", "intermediate", "advanced"] = "beginner"
 
 
+class TaskExample(BaseModel):
+    input: str
+    output: str
+
+
 class Task(BaseModel):
-    """Постановщик -> Оркестратор. Тесты хранятся у проверяющего, сюда не попадают."""
+    """Постановщик -> Оркестратор. Один публичный пример; полный набор тестов хранится у проверяющего."""
     task_id: str
     statement: str
     topic: str
+    example: TaskExample | None = None
 
 
 # ---------- Тьютор (A) ----------
