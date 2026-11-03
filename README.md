@@ -79,7 +79,11 @@ uvicorn api.main:app --reload          # бэкенд, http://127.0.0.1:8000
 streamlit run frontend/app.py          # чат, обычно http://localhost:8501
 ```
 
-Настоящего проверяющего включает переменная `USE_REAL_CHECKER=1`. Пока `.env` загружается позже, чем читается эта переменная, поэтому задавайте её прямо в команде: `USE_REAL_CHECKER=1 uvicorn api.main:app --reload`.
+Чтобы включить настоящего проверяющего в `.env` нужно прописать (при заполненном `GIGACHAT_CREDENTIALS`):
+
+```dotenv
+USE_REAL_CHECKER=1
+```
 
 ## Тесты и замеры
 
@@ -113,11 +117,17 @@ CI (`.github/workflows/tests.yml`) запускает тесты и провер
 | Запрос | Что делает |
 |---|---|
 | `POST /chat` | один ход: `student_id`, `message`, необязательный `code` |
+| `POST /chat/stream` | тот же запрос, что `/chat`; поток NDJSON: события `step`, затем `result` с ответом в `data` или `error` с полем `message` |
+| `GET /info` | режим проверяющего (`real` / `stub`), тьютора, лимит шагов, размер банка и демо-режим |
+| `GET /session/{student_id}` | текущая задача, уровень подсказки, история диалога и список решённых задач |
+| `GET /tasks` | список задач банка без тестов и решений |
+| `POST /session/{student_id}/task` | выбрать задачу: JSON `{"task_id": "..."}`; ответ: `task`, `hint_level`, `starter`; неизвестная задача — 404 |
+| `GET /demo/{task_id}` | эталонное и неверные решения для показа; доступно при `TUTOR_DEMO=1`, иначе 404 |
 | `POST /reset/{student_id}` | сбросить сессию студента |
 | `GET /metrics` | p50, p95, error rate и число ходов с момента запуска |
 | `GET /health` | проверка, что сервис жив |
 
-Ответ `/chat` содержит `reply`, `hint_level`, `task`, `verdict`, `analysis`, `status`, `retries`, `errors`, `timings`, `total_seconds`. Документация FastAPI: `http://127.0.0.1:8000/docs`.
+Ответ `/chat` содержит `reply`, `hint_level`, `task`, `verdict`, `analysis`, `status`, `retries`, `errors`, `timings`, `total_seconds`, `solved` (список ID решённых задач). Документация FastAPI: `http://127.0.0.1:8000/docs`.
 
 ## Структура
 
