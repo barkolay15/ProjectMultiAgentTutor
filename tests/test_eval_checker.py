@@ -41,6 +41,7 @@ def test_baseline_rules():
     mk = lambda et: CheckVerdict(task_id="t", passed=False, error_type=et)
     assert baseline_category(mk("SyntaxError")) == "syntax"
     assert baseline_category(mk("Timeout")) == "timeout"
+    assert baseline_category(mk("RuntimeCrash")) == "timeout"
     assert baseline_category(mk("AssertionError")) == "logic"
     assert baseline_category(mk("AttributeError")) == "runtime"
 
@@ -67,7 +68,11 @@ def test_errors_do_not_stop_the_run():
     rows = evaluate(ITEMS, load_tasks(), mode="llm", llm=Broken(), log=lambda *_: None)
     assert len(rows) == 4 and all(r["error"] for r in rows)
     assert all(r["error"] == "RuntimeError" for r in rows)
-    assert [r["verdict_error_type"] for r in rows] == ["AssertionError", "SyntaxError", "Timeout", "AssertionError"]
+    error_types = [r["verdict_error_type"] for r in rows]
+    assert error_types[:2] == ["AssertionError", "SyntaxError"]
+    # Лимит CPU в Linux может завершить процесс раньше таймаута subprocess.
+    assert error_types[2] in ("Timeout", "RuntimeCrash")
+    assert error_types[3] == "AssertionError"
     assert summarize(rows)["n_errors"] == 4
 
 
