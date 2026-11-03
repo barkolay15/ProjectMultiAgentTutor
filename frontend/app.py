@@ -22,7 +22,6 @@ from frontend.helpers import (
     MAX_HINT,
     STATUS_FILTERS,
     attempts_table,
-    bug_type_label,
     category_label,
     chat_to_markdown,
     clamp_hint,
@@ -66,11 +65,6 @@ def api_status(url: str):
 @st.cache_data(ttl=60, show_spinner=False)
 def bank_tasks(url: str) -> list[dict]:
     return TutorClient(url).tasks()
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def demo_data(url: str, task_id: str):
-    return TutorClient(url).demo(task_id)
 
 
 def reset_editor(student_id: str, seed: str = "", task_id: str | None = None) -> None:
@@ -127,7 +121,6 @@ last = state.last.get(student_id)
 solved = state.solved.get(student_id, [])
 bank_ok = bool(api_ok and info and info.get("checker") == "real" and info.get("bank"))
 bank = bank_tasks(api_url) if bank_ok else []
-demo_on = bool(api_ok and info and info.get("demo"))
 task_now = (last or {}).get("task") or {}
 task_id_now = task_now.get("task_id")
 
@@ -139,6 +132,10 @@ if task_id_now and ed.get("task_id") != task_id_now:
 
 # ---------------------------------------------------------------- боковая панель, часть 2
 with st.sidebar:
+    if info:
+        st.caption(f"Модель: {info.get('model') or 'не используется'}")
+        st.caption(f"Промпт проверяющего: {info.get('checker_prompt_version') or 'нет данных'}")
+
     if bank:
         st.progress(len(set(solved)) / len(bank), text=solved_summary(solved, len(bank)))
 
@@ -402,16 +399,6 @@ with right:
     if attempts:
         with st.expander(f"Мои попытки ({len(attempts)})"):
             st.dataframe(pd.DataFrame(attempts), hide_index=True)
-
-    demo = demo_data(api_url, task_id_now) if demo_on and task_id_now else None
-    if demo:
-        with st.expander("Демо: готовые решения"):
-            st.caption("Только для показа. Включается переменной TUTOR_DEMO=1 на стороне API.")
-            st.button("Верное решение", key=f"demo_ref_{student_id}", on_click=reset_editor,
-                      args=(student_id, demo["reference"], task_id_now))
-            for i, mutant in enumerate(demo["mutants"]):
-                st.button(f"С ошибкой: {bug_type_label(mutant['bug_type'])}", key=f"demo_mut_{i}_{student_id}",
-                          on_click=reset_editor, args=(student_id, mutant["code"], task_id_now))
 
 pending = None
 if run_clicked:

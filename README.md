@@ -118,7 +118,7 @@ CI (`.github/workflows/tests.yml`) запускает тесты и провер
 |---|---|
 | `POST /chat` | один ход: `student_id`, `message`, необязательный `code` |
 | `POST /chat/stream` | тот же запрос, что `/chat`; поток NDJSON: события `step`, затем `result` с ответом в `data` или `error` с полем `message` |
-| `GET /info` | режим проверяющего (`real` / `stub`), тьютора, лимит шагов, размер банка и демо-режим |
+| `GET /info` | режим проверяющего (`real` / `stub`), тьютора, модель (`model`, `null` без LLM), версия промпта проверяющего (`checker_prompt_version`), лимит шагов, размер банка и демо-режим |
 | `GET /session/{student_id}` | текущая задача, уровень подсказки, история диалога и список решённых задач |
 | `GET /tasks` | список задач банка без тестов и решений |
 | `POST /session/{student_id}/task` | выбрать задачу: JSON `{"task_id": "..."}`; ответ: `task`, `hint_level`, `starter`; неизвестная задача — 404 |

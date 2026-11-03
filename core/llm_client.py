@@ -13,13 +13,15 @@ from langchain_gigachat.chat_models import GigaChat
 
 load_dotenv()
 
+MODEL_NAME = "GigaChat-2"
+
 
 @lru_cache(maxsize=None)
 def get_llm(temperature: float = 0.0, max_tokens: int = 800) -> GigaChat:
     return GigaChat(
         credentials=os.environ["GIGACHAT_CREDENTIALS"],
         scope="GIGACHAT_API_PERS",
-        model="GigaChat-2",
+        model=MODEL_NAME,
         temperature=temperature,
         max_tokens=max_tokens,
         verify_ssl_certs=False,  # без сертификата Минцифры; для учёбы допустимо
