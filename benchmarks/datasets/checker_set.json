@@ -350,11 +350,6 @@
         "code": "def position_min(list1):\n    min_val = min(list1)\n    return [i for i, j in enumerate(list1) if j == min_val and i == 0]\n"
       },
       {
-        "variant_id": "mbpp/322#m2",
-        "bug_type": "edge_case",
-        "code": "def position_min(list1):\n    if len(list1) == 0:\n        return [0]\n    min_val = min(list1)\n    return [i for i, j in enumerate(list1) if j == min_val]"
-      },
-      {
         "variant_id": "mbpp/322#m3",
         "bug_type": "runtime",
         "code": "def position_min(list1):\n    return 1 / 0\n"
