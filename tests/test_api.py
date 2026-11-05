@@ -6,7 +6,11 @@ import os
 os.environ["USE_REAL_CHECKER"] = "0"   # до импорта api: .env не должен включать настоящего проверяющего
 
 import dataclasses
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api import routes
@@ -55,10 +59,12 @@ def test_wrong_code_raises_hint_and_is_saved_in_session():
     assert [h["role"] for h in sess["history"]] == ["student", "tutor"]
 
 
-def test_right_code_closes_task():
+def test_right_code_keeps_solved_task_open():
     data = post("api_c", code=GOOD).json()
     assert data["verdict"]["passed"] is True
-    assert client.get("/session/api_c").json()["task"] is None
+    sess = client.get("/session/api_c").json()
+    assert sess["task"]["task_id"] == data["task"]["task_id"]
+    assert data["task"]["task_id"] in sess["solved"]
 
 
 def test_validation_errors():
@@ -139,6 +145,98 @@ def test_demo_is_off_by_default_and_on_with_flag():
             assert data["reference"] and isinstance(data["mutants"], list)
     finally:
         os.environ.pop("TUTOR_DEMO", None)
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+def test_recheck_and_followup_stay_on_solved_task(monkeypatch, path):
+    from api import bank
+
+    monkeypatch.setattr(routes, "_agents", dataclasses.replace(
+        stub_agents(), tutor=fake_tutor, next_task=routes._bank_next_task))
+    student = "api_recheck_" + path.rsplit("/", 1)[-1]
+    task = bank.all_tasks()[0]
+    client.post(f"/reset/{student}")
+    client.post(f"/session/{student}/task", json={"task_id": task.task_id})
+
+    def turn(message, code):
+        response = client.post(path, json={"student_id": student, "message": message,
+                                          "code": code, "task_id": task.task_id})
+        assert response.status_code == 200
+        if path == "/chat":
+            return response.json()
+        return json.loads(response.text.splitlines()[-1])["data"]
+
+    for data in [turn("проверьте", GOOD), turn("проверьте ещё раз", GOOD), turn("Почему это работает?", None)]:
+        assert data["status"] == "ok"
+        assert data["task"]["task_id"] == task.task_id
+        assert data["solved"] == [task.task_id]
+    sess = client.get(f"/session/{student}").json()
+    assert sess["task"]["task_id"] == task.task_id
+    assert sess["history"][0]["code"] == GOOD
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+def test_stale_task_is_rejected_without_running_agents(monkeypatch, path):
+    from api import bank
+    from unittest.mock import Mock
+
+    student = "api_stale_" + path.rsplit("/", 1)[-1]
+    current, stale = bank.all_tasks()[:2]
+    client.post(f"/session/{student}/task", json={"task_id": current.task_id})
+    check = Mock(side_effect=AssertionError("Старый код нельзя проверять на другой задаче"))
+    monkeypatch.setattr(routes, "_agents", dataclasses.replace(stub_agents(), check=check))
+    before = client.get(f"/session/{student}").json()
+    response = client.post(path, json={"student_id": student, "message": "проверьте", "code": GOOD,
+                                       "task_id": stale.task_id})
+    if path == "/chat":
+        assert response.status_code == 409
+    else:
+        event = json.loads(response.text.splitlines()[-1])
+        assert event["type"] == "error" and event["status"] == 409
+    check.assert_not_called()
+    assert client.get(f"/session/{student}").json() == before
+
+
+@pytest.mark.parametrize("path", ["/chat", "/chat/stream"])
+@pytest.mark.parametrize("mutation", ["choose", "reset"])
+def test_session_changes_wait_for_inflight_turn(monkeypatch, path, mutation):
+    from api import bank
+
+    first, second = bank.all_tasks()[:2]
+    student = f"api_concurrent_{mutation}_{path.rsplit('/', 1)[-1]}"
+    client.post(f"/session/{student}/task", json={"task_id": first.task_id})
+    entered, release, mutation_started = threading.Event(), threading.Event(), threading.Event()
+
+    def slow_tutor(req, err):
+        entered.set()
+        assert release.wait(5)
+        return fake_tutor(req, err)
+
+    monkeypatch.setattr(routes, "_agents", dataclasses.replace(stub_agents(), tutor=slow_tutor))
+
+    def mutate():
+        mutation_started.set()
+        if mutation == "choose":
+            return client.post(f"/session/{student}/task", json={"task_id": second.task_id})
+        return client.post(f"/reset/{student}")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(client.post, path, json={"student_id": student, "message": "подсказка"})
+        try:
+            assert entered.wait(5)
+            changed = pool.submit(mutate)
+            assert mutation_started.wait(5)
+            with pytest.raises(TimeoutError):
+                changed.result(timeout=0.2)
+        finally:
+            release.set()
+        assert pending.result(timeout=5).status_code == 200
+        assert changed.result(timeout=5).status_code == 200
+    sess = client.get(f"/session/{student}").json()
+    if mutation == "choose":
+        assert sess["task"]["task_id"] == second.task_id and sess["hint_level"] == 1
+    else:
+        assert sess["task"] is None and sess["history"] == [] and sess["solved"] == []
 
 
 if __name__ == "__main__":

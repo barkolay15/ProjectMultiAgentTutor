@@ -201,6 +201,16 @@ def test_history_to_chat_maps_roles_and_skips_unknown():
     assert history_to_chat(None) == []
 
 
+def test_history_to_chat_preserves_submitted_code():
+    code = "def f(): return 0"
+    chat = history_to_chat([{"role": "student", "text": "проверьте", "code": code, "task_id": "t"}])
+    assert chat == [{"role": "user", "text": "проверьте", "code": code}]
+
+
+def test_stale_task_error_shows_server_explanation():
+    assert api_error_text(409, "Выберите задачу заново") == "Выберите задачу заново"
+
+
 def test_chat_to_markdown_contains_code_and_verdict():
     md = chat_to_markdown([
         {"role": "user", "text": "Проверьте", "code": "def f(): return 0"},

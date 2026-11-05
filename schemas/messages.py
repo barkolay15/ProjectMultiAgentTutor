@@ -92,6 +92,8 @@ class Task(BaseModel):
 class TutorRequest(BaseModel):
     """Оркестратор -> Тьютор. Готового решения здесь нет."""
     student_message: str
+    student_code: str | None = None
+    history: list[dict[str, str]] = Field(default_factory=list)
     task: Task | None = None
     profile: StudentProfile | None = None
     verdict: CheckVerdict | None = None

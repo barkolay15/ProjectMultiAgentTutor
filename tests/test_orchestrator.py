@@ -16,13 +16,13 @@ def nodes(out):
     return [t["node"] for t in out["timings"]]
 
 
-def test_correct_code_passes_and_task_resets():
+def test_correct_code_passes_and_task_stays_open():
     out = run_turn("s1", "проверьте", code=GOOD)
     assert out["status"] == "ok"
     assert out["verdict"].passed
     assert out.get("analysis") is None            # ревью не нужно
     assert out["memory_event"].result == "pass"
-    assert out["next_task"] is None               # задача решена, нужна новая
+    assert out["next_task"] == out["task"]        # можно обсудить и перепроверить решение
     assert out["next_hint_level"] == 1
 
 
@@ -125,6 +125,40 @@ def test_stream_turn_gives_steps_then_same_result_as_run_turn():
     assert final["verdict"].passed == plain["verdict"].passed is False
     assert final["next_hint_level"] == plain["next_hint_level"] == 2
     assert final["total_seconds"] >= 0
+
+
+def test_tutor_receives_code_and_history_of_current_task():
+    captured = []
+    agents = stub_agents()
+    original_tutor = agents.tutor
+
+    def tutor(req, err):
+        captured.append(req)
+        return original_tutor(req, err)
+
+    agents = dataclasses.replace(agents, tutor=tutor)
+    first = run_turn("context", "Почему не работает?", code=BAD, agents=agents)
+    assert captured[0].student_code == BAD
+    assert first["history"][0]["code"] == BAD
+    other_task = {"role": "student", "text": "Другая задача", "task_id": "other/task"}
+    second = run_turn("context", "Объясни предыдущую подсказку", task=first["next_task"],
+                      history=[other_task, *first["history"]], agents=agents)
+    assert second["status"] == "ok"
+    assert captured[1].history == first["history"]
+    assert captured[1].history[0]["code"] == BAD
+    assert captured[1].history[1]["text"] == first["reply"].message
+
+
+def test_stubs_never_use_live_tutor_even_with_credentials(monkeypatch):
+    from unittest.mock import Mock
+    from core import llm_client
+
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "test-placeholder")
+    get_llm = Mock(side_effect=AssertionError("Заглушки не должны вызывать модель"))
+    monkeypatch.setattr(llm_client, "get_llm", get_llm)
+    assert run_turn("offline", "привет")["status"] == "ok"
+    assert list(stream_turn("offline", "привет"))[-1]["state"]["status"] == "ok"
+    get_llm.assert_not_called()
 
 
 if __name__ == "__main__":

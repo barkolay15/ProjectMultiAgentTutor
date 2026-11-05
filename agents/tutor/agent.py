@@ -143,7 +143,16 @@ def run_tutor(req: TutorRequest, err: Optional[str] = None) -> str:
     ) + error_context
 
     # --- ПЕРВЫЙ ВЫЗОВ LLM ---
-    messages = [SystemMessage(content=system_msg), HumanMessage(content=req.student_message)]
+    def student_text(text, code=None):
+        return text + (f"\n\nКод студента:\n```python\n{code}\n```" if code else "")
+
+    messages = [SystemMessage(content=system_msg)]
+    for item in req.history:
+        if item.get("role") == "student":
+            messages.append(HumanMessage(content=student_text(item.get("text", ""), item.get("code"))))
+        elif item.get("role") == "tutor":
+            messages.append(AIMessage(content=item.get("text", "")))
+    messages.append(HumanMessage(content=student_text(req.student_message, req.student_code)))
     
     try:
         response = llm.invoke(messages)

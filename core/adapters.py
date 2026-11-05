@@ -3,28 +3,44 @@
 Проверяющий (D) имеет одну функцию analyze(req, llm, stats=None) -> (verdict, analysis | None):
 она сама запускает run_tests, сама повторяет невалидный JSON и при неудаче возвращает analysis=None.
 Оркестратор же вызывает проверку и ревью двумя узлами, поэтому адаптер вызывает analyze один раз
-в узле check, а разбор отдаёт узлу review из кэша.
+в узле check, а разбор хранит приватно в объекте вердикта этого хода.
 """
 import dataclasses
 
+from pydantic import PrivateAttr
+
 from core.orchestrator import Agents
+from schemas.messages import CheckVerdict, ErrorAnalysis
+
+
+class _CheckerVerdict(CheckVerdict):
+    """Данные одного хода: приватные поля не попадают в ответ API."""
+
+    _analysis: ErrorAnalysis | None = PrivateAttr(default=None)
+    _llm_error: str | None = PrivateAttr(default=None)
+
+
+def with_real_tutor(agents: Agents) -> Agents:
+    from agents.tutor.agent import run_tutor
+
+    return dataclasses.replace(agents, tutor=run_tutor)
 
 
 def with_real_checker(agents: Agents, llm) -> Agents:
     from agents.checker.agent import analyze as checker_analyze
 
-    cache: dict[tuple[str, str], tuple[object, str | None]] = {}
-
     def check(req, err):
         stats = {}
         verdict, analysis = checker_analyze(req, llm, stats=stats)
-        if not verdict.passed:
-            cache[(req.task_id, req.student_code)] = (analysis, stats.get("llm_error"))
-        return verdict
+        result = _CheckerVerdict(**verdict.model_dump())
+        result._analysis = analysis
+        result._llm_error = stats.get("llm_error")
+        return result
 
     def analyze(payload, err):
-        verdict, code = payload["verdict"], payload["student_code"]
-        analysis, llm_error = cache.pop((verdict.task_id, code), (None, None))
+        verdict = payload["verdict"]
+        analysis = getattr(verdict, "_analysis", None)
+        llm_error = getattr(verdict, "_llm_error", None)
         if analysis is None:
             if llm_error:
                 raise ValueError(f"разбор ошибки недоступен: {llm_error}")
