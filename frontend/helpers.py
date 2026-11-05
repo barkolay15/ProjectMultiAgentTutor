@@ -261,6 +261,8 @@ def api_error_text(status_code: int, detail=None) -> str:
                 "(сообщение до 2000 символов, код до 10 000).")
     if status_code == 404:
         return "Нужный адрес API не найден. Проверьте адрес API в настройках и версию бэкенда."
+    if status_code == 409:
+        return detail if isinstance(detail, str) and detail else "Текущая задача изменилась. Выберите задачу заново."
     if status_code >= 500:
         text = detail if isinstance(detail, str) and detail else "Внутренняя ошибка сервера."
         return f"{text} Подробности в терминале с бэкендом."
@@ -271,7 +273,7 @@ def history_to_chat(history: list[dict] | None) -> list[dict]:
     """История сессии с сервера (роли student/tutor) в формат чата интерфейса."""
     roles = {"student": "user", "tutor": "assistant"}
     return [
-        {"role": roles[h["role"]], "text": h.get("text", "")}
+        {"role": roles[h["role"]], "text": h.get("text", ""), **({"code": h["code"]} if h.get("code") else {})}
         for h in (history or [])
         if h.get("role") in roles
     ]

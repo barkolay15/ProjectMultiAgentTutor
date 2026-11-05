@@ -32,7 +32,7 @@ def ui(monkeypatch):
         task = next(t for t in BANK if t["task_id"] == task_id)
         return {"task": task, "starter": task["starter"], "hint_level": 1}
 
-    def chat_stream(student, message, code):
+    def chat_stream(student, message, code, task_id=None):
         verdict = None if code is None else {
             "passed": False, "failed_details": [{"test": "assert strlen('abc') == 3", "got": "0"}],
             "failed_tests": ["assert strlen('abc') == 3"], "error_type": "AssertionError",
@@ -126,7 +126,7 @@ def test_failed_session_reset_keeps_progress_and_draft(ui):
 
 def test_incomplete_turn_shows_real_cause(ui):
     app, api = ui
-    api.chat_stream.side_effect = lambda *args: iter([{"type": "result", "data": {
+    api.chat_stream.side_effect = lambda *args, **kwargs: iter([{"type": "result", "data": {
         "reply": "Что-то пошло не так", "task": BANK[0], "status": "error", "hint_level": 1,
         "verdict": None, "errors": ["check: ConnectTimeout: unavailable"], "total_seconds": 0.2,
     }}])
@@ -142,8 +142,8 @@ def test_unavailable_analysis_does_not_hide_test_verdict(ui):
     app, api = ui
     original = api.chat_stream.side_effect
 
-    def stream(*args):
-        events = list(original(*args))
+    def stream(*args, **kwargs):
+        events = list(original(*args, **kwargs))
         events[0]["data"]["errors"] = ["review: разбор ошибки недоступен: ConnectTimeout"]
         return iter(events)
 
@@ -238,3 +238,40 @@ def test_public_example_is_readable_in_task_and_catalog(ui):
     assert not app.exception
     assert sum(item.value == "Входные данные" for item in app.caption) == 2
     assert not any("assert " in item.value for item in app.code)
+
+
+def test_recheck_keeps_task_and_sends_displayed_task_id(ui):
+    app, api = ui
+    original = api.chat_stream.side_effect
+
+    def passing_stream(*args, **kwargs):
+        events = list(original(*args, **kwargs))
+        events[0]["data"]["verdict"] = {"passed": True}
+        events[0]["data"]["solved"] = [BANK[0]["task_id"]]
+        return iter(events)
+
+    api.chat_stream.side_effect = passing_stream
+    app.run().text_area[0].input(CODE).run()
+    app.button(key="run").click().run()
+    app.button(key="run").click().run()
+    assert not app.exception
+    assert app.text_area[0].value == CODE
+    assert api.chat_stream.call_count == 2
+    assert all(call.kwargs["task_id"] == BANK[0]["task_id"] for call in api.chat_stream.call_args_list)
+
+
+def test_stale_task_error_keeps_code_and_allows_reselecting_current_task(ui):
+    app, api = ui
+    api.chat_stream.side_effect = lambda *args, **kwargs: iter([
+        {"type": "error", "message": "Текущая задача изменилась. Выберите задачу заново.", "status": 409}])
+    app.run().text_area[0].input(CODE).run()
+    app.button(key="run").click().run()
+    assert not app.exception
+    assert app.text_area[0].value == CODE
+    assert any("Текущая задача изменилась" in item.value for item in app.markdown)
+    app.button(key="open_tasks").click().run()
+    app.button(key="confirm_task").click().run()
+    assert not app.exception
+    api.set_task.assert_called_once_with("s1", BANK[0]["task_id"])
+    assert app.text_area[0].value == CODE
+    assert "s1" not in app.session_state["failed_requests"]

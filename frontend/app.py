@@ -268,7 +268,7 @@ def task_dialog(student_id: str, bank: list[dict], solved: list, nonce: int) -> 
                 st.code(task["starter"], language="python")
         button = "Вернуться к решению" if selected == current else ("Продолжить решение" if draft is not None else "Начать решение")
         if st.button(button, type="primary", key="confirm_task", use_container_width=True):
-            if selected == current or take_task(student_id, selected, task.get("starter", "")):
+            if take_task(student_id, selected, task.get("starter", "")):
                 close_task_picker()
                 st.rerun()
             if error := state.pop("flash", None):
@@ -338,17 +338,17 @@ def ask(message: str, code: str | None) -> dict:
         data = None
         try:
             try:
-                for ev in client.chat_stream(student_id, message, code):
+                for ev in client.chat_stream(student_id, message, code, task_id=task_id_now):
                     if ev["type"] == "step":
                         status.write(step_line(ev))
                     elif ev["type"] == "result":
                         data = ev["data"]
                     elif ev["type"] == "error":
-                        raise ApiError(ev.get("message", "Ошибка на стороне сервера."))
+                        raise ApiError(ev.get("message", "Ошибка на стороне сервера."), ev.get("status"))
             except ApiError as e:
                 if e.status != 404:
                     raise
-                data = client.chat(student_id, message, code)   # старый бэкенд
+                data = client.chat(student_id, message, code, task_id=task_id_now)   # старый бэкенд
             if data is None:
                 raise ApiError("Сервер оборвал ответ. Попробуйте ещё раз.")
         except ApiError:

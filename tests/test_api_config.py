@@ -21,6 +21,7 @@ def test_checker_from_dotenv(tmp_path, monkeypatch, setting, expected):
         return load_dotenv(env_file)
 
     monkeypatch.delenv("USE_REAL_CHECKER", raising=False)
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", "")
     monkeypatch.setattr(dotenv, "load_dotenv", load_test_env)
     model = Mock()
     monkeypatch.setattr(llm_client, "get_llm", lambda: model)
@@ -34,3 +35,15 @@ def test_checker_from_dotenv(tmp_path, monkeypatch, setting, expected):
     assert connect.call_count == (expected == "real")
     if expected == "real":
         assert connect.call_args.args[1] is model
+
+
+@pytest.mark.parametrize("credentials", ["", "test-placeholder"])
+def test_api_connects_real_tutor_explicitly(monkeypatch, credentials):
+    from agents.tutor.agent import run_tutor
+
+    monkeypatch.setenv("USE_REAL_CHECKER", "0")
+    monkeypatch.setenv("GIGACHAT_CREDENTIALS", credentials)
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: None)
+    namespace = runpy.run_path(str(Path(__file__).resolve().parents[1] / "api" / "routes.py"))
+    assert namespace["info"]()["tutor"] == ("llm" if credentials else "stub")
+    assert (namespace["_agents"].tutor is run_tutor) == bool(credentials)

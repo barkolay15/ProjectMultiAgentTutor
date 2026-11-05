@@ -33,6 +33,10 @@ router = APIRouter()
 
 # По умолчанию заглушки. USE_REAL_CHECKER=1 подключает настоящего проверяющего (нужен ключ в .env).
 _agents: Agents = stub_agents()
+_real_tutor = bool(os.getenv("GIGACHAT_CREDENTIALS"))
+if _real_tutor:
+    from core.adapters import with_real_tutor
+    _agents = with_real_tutor(_agents)
 _real_checker = os.getenv("USE_REAL_CHECKER") == "1"
 if _real_checker:
     from core.adapters import with_real_checker
@@ -76,6 +80,7 @@ class ChatRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=64, pattern=r"^[\w.\-]+$")
     message: str = Field(min_length=1, max_length=2000)
     code: str | None = Field(default=None, max_length=10000)
+    task_id: str | None = Field(default=None, min_length=1, max_length=100)
 
     @field_validator("message")
     @classmethod
@@ -109,11 +114,11 @@ def info():
     """Режим работы: интерфейс показывает, какие агенты настоящие, а какие заглушки."""
     return {
         "checker": "real" if _real_checker else "stub",
-        "tutor": "llm" if os.getenv("GIGACHAT_CREDENTIALS") else "stub",
+        "tutor": "llm" if _real_tutor else "stub",
         "max_steps": MAX_STEPS,
         "bank": len(bank.all_tasks()),
         "demo": _demo_enabled(),
-        "model": MODEL_NAME if _real_checker or os.getenv("GIGACHAT_CREDENTIALS") else None,
+        "model": MODEL_NAME if _real_checker or _real_tutor else None,
         "checker_prompt_version": CHECKER_PROMPT_VERSION,
     }
 
@@ -153,6 +158,8 @@ def _commit_turn(req: ChatRequest, sess: dict, out: dict) -> dict:
 def _session_for_turn(req: ChatRequest):
     with _state_lock:
         sess = _sessions.setdefault(req.student_id, _new_session())
+        if req.task_id is not None and (sess["task"] is None or sess["task"].task_id != req.task_id):
+            raise HTTPException(status_code=409, detail="Текущая задача изменилась. Выберите задачу заново.")
         return sess, sess["task"], sess["hint_level"], list(sess["history"])
 
 
@@ -179,9 +186,9 @@ def chat(req: ChatRequest):
 def _turn_events(req: ChatRequest):
     """События одного хода для потоковой ручки: step (после каждого узла графа), затем result или error."""
     with _student_lock(req.student_id):
-        sess, task, hint_level, history = _session_for_turn(req)
         final = None
         try:
+            sess, task, hint_level, history = _session_for_turn(req)
             for ev in stream_turn(
                 student_id=req.student_id, message=req.message, code=req.code,
                 task=task, hint_level=hint_level, history=history, agents=_agents,
@@ -191,6 +198,9 @@ def _turn_events(req: ChatRequest):
                 else:
                     final = ev["state"]
             payload = _commit_turn(req, sess, final)
+        except HTTPException as e:
+            yield {"type": "error", "message": e.detail, "status": e.status_code}
+            return
         except Exception:
             log.exception("stream turn failed: student=%s", req.student_id)
             yield {"type": "error", "message": "Оркестратор не смог обработать ход."}
@@ -241,9 +251,10 @@ def choose_task(choice: TaskChoice, student_id: str = Path(min_length=1, max_len
     task = bank.get_task(choice.task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Такой задачи нет в банке.")
-    with _state_lock:
-        sess = _sessions.setdefault(student_id, _new_session())
-        sess.update(task=task, hint_level=1)
+    with _student_lock(student_id):
+        with _state_lock:
+            sess = _sessions.setdefault(student_id, _new_session())
+            sess.update(task=task, hint_level=1)
     return {"task": task.model_dump(), "hint_level": 1, "starter": bank.starter(task.task_id)}
 
 
@@ -260,8 +271,9 @@ def demo(task_id: str):
 
 @router.post("/reset/{student_id}")
 def reset(student_id: str = Path(min_length=1, max_length=64)):
-    with _state_lock:
-        _sessions.pop(student_id, None)
+    with _student_lock(student_id):
+        with _state_lock:
+            _sessions.pop(student_id, None)
     return {"reset": student_id}
 
 

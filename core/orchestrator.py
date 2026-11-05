@@ -132,19 +132,21 @@ def build_graph(agents: Agents):
         return {"analysis": analysis, "retries": retries(s, r)}
 
     def tutor(s: SessionState) -> dict:
-        # Готового решения тут нет: только вопрос студента, задача, профиль и вердикт.
-        kwargs: dict[str, Any] = dict(
+        # История только текущей задачи; код принадлежит студенту, эталона здесь нет.
+        task = s.get("task")
+        history = [dict(item) for item in s.get("history", [])
+                   if not item.get("task_id") or task is None or item["task_id"] == task.task_id]
+        req = TutorRequest(
             student_message=s.get("student_message", ""),
-            task=s.get("task"),
+            student_code=s.get("student_code"),
+            history=history,
+            task=task,
             profile=s.get("profile"),
             verdict=s.get("verdict"),
+            analysis=s.get("analysis"),
             hint_level=_clamp_hint(s.get("hint_level", 1)),
         )
-        if "analysis" in TutorRequest.model_fields:  # появится, если добавят поле в схему
-            kwargs["analysis"] = s.get("analysis")
-        if "student_code" in TutorRequest.model_fields:  # то же: код студента, не решение
-            kwargs["student_code"] = s.get("student_code")
-        reply, r = call_validated(agents.tutor, TutorRequest(**kwargs), TutorReply)
+        reply, r = call_validated(agents.tutor, req, TutorReply)
         return {"reply": reply, "retries": retries(s, r)}
 
     def update_memory(s: SessionState) -> dict:
@@ -173,17 +175,20 @@ def build_graph(agents: Agents):
             next_hint = 1
         else:
             next_hint = min(3, hint + 1)
-        history = list(s.get("history", [])) + [
-            {"role": "student", "text": s.get("student_message", "")},
-            {"role": "tutor", "text": reply.message},
-        ]
-        passed = verdict is not None and verdict.passed
+        student_entry = {"role": "student", "text": s.get("student_message", "")}
+        tutor_entry = {"role": "tutor", "text": reply.message}
+        if s.get("student_code"):
+            student_entry["code"] = s["student_code"]
+        if s.get("task"):
+            student_entry["task_id"] = tutor_entry["task_id"] = s["task"].task_id
+        history = list(s.get("history", [])) + [student_entry, tutor_entry]
         return {
             "reply": reply,
             "status": status,
             "history": history,
             "next_hint_level": next_hint,
-            "next_task": None if passed else s.get("task"),
+            # Решённая задача остаётся открытой для обсуждения и повторной проверки.
+            "next_task": s.get("task"),
         }
 
     def after(next_node: str):

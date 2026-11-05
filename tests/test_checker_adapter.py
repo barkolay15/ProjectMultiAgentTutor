@@ -35,7 +35,7 @@ def test_wrong_code_goes_through_real_checker_and_review():
 def test_right_code_needs_no_review():
     out = run_turn("s1", "проверьте", code=RIGHT, task=TASK, agents=agents_with(FakeLLM([tool_call()])))
     assert out["verdict"].passed and out.get("analysis") is None
-    assert out["next_task"] is None
+    assert out["next_task"] == TASK
 
 
 def test_checker_gave_up_tutor_still_answers():
@@ -54,6 +54,43 @@ def test_network_failure_keeps_verdict_and_reports_unavailable_analysis():
     assert out["verdict"].passed is False
     assert out.get("analysis") is None
     assert any("ConnectTimeout" in error for error in out["errors"])
+
+
+def test_identical_parallel_submissions_keep_their_own_analysis(monkeypatch):
+    import dataclasses
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from agents.checker import agent as checker
+    from schemas.messages import CheckVerdict, ErrorAnalysis
+
+    ready = threading.Barrier(2)
+    local = threading.local()
+
+    def fake_checker(req, llm, stats):
+        label = local.student
+        return (CheckVerdict(task_id=req.task_id, passed=False),
+                ErrorAnalysis(task_id=req.task_id, category="logic", summary=label, hint_for_tutor="hint"))
+
+    monkeypatch.setattr(checker, "analyze", fake_checker)
+    agents = with_real_checker(stub_agents(), Mock())
+    original_check = agents.check
+
+    def check(req, err):
+        verdict = original_check(req, err)
+        ready.wait(timeout=5)  # Оба check закончились до того, как начнётся review.
+        return verdict
+
+    agents = dataclasses.replace(agents, check=check)
+
+    def turn(student):
+        local.student = student
+        return run_turn(student, "проверьте", code=WRONG, task=TASK, agents=agents)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(turn, ["student_one", "student_two"]))
+    assert [out["analysis"].summary for out in results] == ["student_one", "student_two"]
+    assert all(not out["errors"] for out in results)
+    assert all("_analysis" not in out["verdict"].model_dump() for out in results)
 
 
 if __name__ == "__main__":

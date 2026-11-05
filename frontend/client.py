@@ -41,11 +41,12 @@ class TutorClient:
         except ValueError:
             raise ApiError("Сервер вернул ответ не в формате JSON. Проверьте адрес API.")
 
-    def chat_stream(self, student_id: str, message: str, code: str | None = None):
+    def chat_stream(self, student_id: str, message: str, code: str | None = None, task_id: str | None = None):
         """Ход по шагам: отдаёт события step, затем result или error (поток /chat/stream)."""
         try:
             r = self._http.post(f"{self.base_url}/chat/stream", stream=True, timeout=self.timeout,
-                                json={"student_id": student_id, "message": message, "code": code or None})
+                                json={"student_id": student_id, "message": message, "code": code or None,
+                                      "task_id": task_id})
         except requests.Timeout:
             raise ApiError(connection_error_text("timeout", self.base_url))
         except requests.ConnectionError:
@@ -112,6 +113,6 @@ class TutorClient:
     def reset(self, student_id: str) -> None:
         self._call("POST", f"/reset/{student_id}", timeout=5)
 
-    def chat(self, student_id: str, message: str, code: str | None = None) -> dict:
+    def chat(self, student_id: str, message: str, code: str | None = None, task_id: str | None = None) -> dict:
         return self._call("POST", "/chat", json={
-            "student_id": student_id, "message": message, "code": code or None})
+            "student_id": student_id, "message": message, "code": code or None, "task_id": task_id})
