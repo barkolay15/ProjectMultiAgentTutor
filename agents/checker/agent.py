@@ -41,9 +41,31 @@ def looks_like_solution(text: str) -> bool:
     return "```" in text or bool(_CODE_LINE.search(text))
 
 
-def _analysis_problem(analysis: ErrorAnalysis, task_id: str) -> str | None:
+_SYNTAX = ("SyntaxError", "IndentationError", "TabError")
+_TIMEOUT = ("Timeout", "RuntimeCrash")
+
+
+def allowed_categories(verdict: CheckVerdict) -> set[str] | None:
+    """Какие category совместимы с вердиктом. None: ограничений нет (тесты пройдены, неизвестная задача)."""
+    et = verdict.error_type
+    if verdict.passed or not et or et == "UnknownTask":
+        return None
+    if et in _SYNTAX:
+        return {"syntax"}
+    if et in _TIMEOUT:
+        return {"timeout"}
+    if et == "AssertionError":
+        return {"logic", "edge_case"}
+    return {"runtime"}
+
+
+def _analysis_problem(analysis: ErrorAnalysis, task_id: str, verdict: CheckVerdict | None = None) -> str | None:
     if analysis.task_id != task_id:
         return f"task_id должен быть {task_id}"
+    allowed = allowed_categories(verdict) if verdict is not None else None
+    if allowed is not None and analysis.category not in allowed:
+        return (f"category не соответствует вердикту: error_type = {verdict.error_type}, "
+                f"допустимо только {' или '.join(sorted(allowed))}")
     if looks_like_solution(analysis.summary) or looks_like_solution(analysis.hint_for_tutor):
         return "в тексте есть код; опиши ошибку словами, без программы"
     return None
@@ -103,7 +125,7 @@ def analyze(request: CheckRequest, llm, stats: dict | None = None) -> tuple[Chec
 
         analysis, err = parse_reply(ErrorAnalysis, ai.content)
         if analysis is not None:
-            err = _analysis_problem(analysis, request.task_id)
+            err = _analysis_problem(analysis, request.task_id, verdict)
         if "json_valid_first_try" not in st:   # первый содержательный ответ модели, до повторов
             st["json_valid_first_try"] = analysis is not None
             st["no_code_first_try"] = err is None

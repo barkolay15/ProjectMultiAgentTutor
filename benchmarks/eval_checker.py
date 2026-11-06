@@ -3,6 +3,7 @@
 Запуск из корня проекта:
     python3 -m benchmarks.eval_checker                     # настоящая модель GigaChat (нужен ключ в .env)
     python3 -m benchmarks.eval_checker --mode baseline     # без LLM: тип ошибки по правилам из вердикта
+    python3 -m benchmarks.eval_checker --mode plain_llm    # «голая» модель: один запрос, без запуска тестов и без проверок
     python3 -m benchmarks.eval_checker --limit 10 --pause 1.0
 
 Данные: benchmarks/datasets/checker_set.json (эталоны и мутанты с bug_type) и задачи из
@@ -26,9 +27,11 @@ from datetime import datetime
 from pathlib import Path
 
 from agents.checker.prompts import PROMPT_VERSION
-from agents.checker.agent import analyze
+from agents.checker.agent import analyze, looks_like_solution
 from agents.checker.sandbox import DATASETS, check, load_tasks
-from schemas.messages import CheckRequest, CheckVerdict
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from schemas.messages import CheckRequest, CheckVerdict, ErrorAnalysis, parse_reply
 
 RESULTS = Path(__file__).parent / "results"
 CATEGORIES = ["syntax", "logic", "edge_case", "runtime", "timeout"]
@@ -44,6 +47,35 @@ def baseline_category(verdict: CheckVerdict) -> str:
     if et == "AssertionError":
         return "logic"           # отличить edge_case по вердикту нельзя
     return "runtime"
+
+
+PLAIN_PROMPT = """Ты проверяющий в учебной системе по Python. Тебе дают условие задачи, тесты и код студента. \
+Определи, почему код не проходит тесты. Тесты ты не запускаешь, судишь по тексту кода.
+
+Категории (category):
+- syntax: код не запускается из-за синтаксической ошибки;
+- runtime: код запускается, но падает исключением при вызове;
+- logic: код возвращает неверный результат на обычных входах;
+- edge_case: код верен на обычных входах, но ошибается на граничных (пустой ввод, ноль, отрицательные, один элемент);
+- timeout: код зависает или работает слишком долго;
+- other: остальное.
+
+Верни только один JSON-объект без текста до и после:
+{"task_id": "<id задачи>", "category": "syntax|logic|edge_case|runtime|timeout|other", \
+"summary": "<1-2 предложения без кода>", "hint_for_tutor": "<наводящая подсказка без решения>"}"""
+
+
+def plain_analyze(request: CheckRequest, llm, task: dict) -> tuple[ErrorAnalysis | None, dict]:
+    """Режим «голая модель»: один запрос, без инструмента run_tests, без повторов и проверок ответа."""
+    user = (f"task_id: {request.task_id}\n\nУсловие:\n{task.get('statement', '')}\n\n"
+            f"Тесты:\n" + "\n".join(task.get("tests", [])) + f"\n\nКод студента:\n{request.student_code}")
+    ai = llm.invoke([SystemMessage(content=PLAIN_PROMPT), HumanMessage(content=user)])
+    analysis, err = parse_reply(ErrorAnalysis, ai.content)
+    stats = {"llm_calls": 1, "tool_called_by_model": False, "retries": 0,
+             "json_valid_first_try": analysis is not None,
+             "no_code_first_try": analysis is not None and not (
+                 looks_like_solution(analysis.summary) or looks_like_solution(analysis.hint_for_tutor))}
+    return analysis, stats
 
 
 def evaluate(items: list[dict], tasks: dict, mode: str = "llm", llm=None,
@@ -63,6 +95,12 @@ def evaluate(items: list[dict], tasks: dict, mode: str = "llm", llm=None,
                 verdict = check(req, tasks)
                 row.update(predicted=baseline_category(verdict), llm_calls=0, tool_called_by_model=None,
                            json_valid_first_try=None, no_code_first_try=None, analysis_ok=None)
+            elif mode == "plain_llm":
+                analysis, stats = plain_analyze(req, llm, tasks[tid])
+                row.update(predicted=analysis.category if analysis else None,
+                           summary=analysis.summary if analysis else None,
+                           hint_for_tutor=analysis.hint_for_tutor if analysis else None,
+                           analysis_ok=analysis is not None, **stats)
             else:
                 stats: dict = {}
                 verdict, analysis = analyze(req, llm, stats)
@@ -72,7 +110,8 @@ def evaluate(items: list[dict], tasks: dict, mode: str = "llm", llm=None,
                            analysis_ok=analysis is not None, **stats)
                 # Локальный вердикт сохраняется при сбое LLM, но для замера это ошибка модели.
                 row["error"] = stats.get("llm_error")
-            row["verdict_error_type"] = verdict.error_type
+            if mode != "plain_llm":
+                row["verdict_error_type"] = verdict.error_type
         except Exception as e:      # сбой сети/лимит API не должен терять уже полученные результаты
             row["error"] = f"{type(e).__name__}: {e}"[:300]
         row["latency_s"] = round(time.time() - t0, 2)
@@ -113,8 +152,12 @@ def summarize(rows: list[dict]) -> dict:
     }
 
 
+def prompt_version_for(mode: str) -> str:
+    return "plain" if mode == "plain_llm" else PROMPT_VERSION
+
+
 def print_report(summary: dict, mode: str):
-    print(f"\n=== Режим: {mode}, промпт {PROMPT_VERSION}: {summary['n_cases']} мутантов, "
+    print(f"\n=== Режим: {mode}, промпт {prompt_version_for(mode)}: {summary['n_cases']} мутантов, "
           f"сбоев: {summary['n_errors']} ===")
     for key in ("category_accuracy", "json_valid_first", "no_code_first", "analysis_ok",
                 "tool_called", "latency_s_mean", "llm_calls_mean"):
@@ -128,7 +171,7 @@ def print_report(summary: dict, mode: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["llm", "baseline"], default="llm")
+    ap.add_argument("--mode", choices=["llm", "plain_llm", "baseline"], default="llm")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--pause", type=float, default=0.3, help="пауза между запросами к модели, с")
     a = ap.parse_args()
@@ -139,7 +182,7 @@ def main():
     items = json.loads(path.read_text(encoding="utf-8"))
     tasks = load_tasks()
     llm = None
-    if a.mode == "llm":
+    if a.mode in ("llm", "plain_llm"):
         from core.llm_client import get_llm
         llm = get_llm()
 
@@ -149,7 +192,7 @@ def main():
 
     RESULTS.mkdir(exist_ok=True)
     out = RESULTS / f"checker_{a.mode}_{datetime.now():%Y%m%d_%H%M%S}.json"
-    meta = {"mode": a.mode, "prompt_version": PROMPT_VERSION, "model": getattr(llm, "model", None),
+    meta = {"mode": a.mode, "prompt_version": prompt_version_for(a.mode), "model": getattr(llm, "model", None),
             "time": datetime.now().isoformat(timespec="seconds")}
     out.write_text(json.dumps({"meta": meta, "summary": summary, "rows": rows},
                               ensure_ascii=False, indent=2), encoding="utf-8")

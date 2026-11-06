@@ -34,6 +34,9 @@ class CheckVerdict(BaseModel):
         default=None, description="Например, 'AssertionError', 'SyntaxError', 'Timeout'"
     )
     traceback_short: str | None = None
+    tests_total: int | None = Field(default=None, description="Сколько всего тестов у задачи")
+    tests_passed: int | None = Field(
+        default=None, description="Сколько тестов прошло; None, если тесты не запускались (синтаксис, таймаут)")
 
 
 class ErrorAnalysis(BaseModel):
