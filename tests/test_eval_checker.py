@@ -61,6 +61,36 @@ def test_llm_run_collects_stats():
     assert r["no_code_first_try"] is True and r["analysis_ok"] is True and r["llm_calls"] == 2
 
 
+def test_plain_llm_mode_one_call_no_tool():
+    class Plain:
+        def __init__(self):
+            self.calls, self.last = 0, None
+
+        def invoke(self, messages):
+            self.calls += 1
+            self.last = messages
+            return AIMessage(content=json.dumps({"task_id": "sample/sum_even", "category": "logic",
+                                                 "summary": "Суммирует все числа.",
+                                                 "hint_for_tutor": "Какие числа надо брать?"}, ensure_ascii=False))
+    llm = Plain()
+    rows = evaluate(ITEMS[:1], load_tasks(), mode="plain_llm", llm=llm, log=lambda *_: None)
+    assert llm.calls == 4 and all(r["llm_calls"] == 1 for r in rows)      # по одному запросу на мутанта
+    assert all(r["tool_called_by_model"] is False and r["analysis_ok"] for r in rows)
+    assert "return sum(numbers)" in llm.last[1].content or "Код студента" in llm.last[1].content
+    assert [r["predicted"] for r in rows] == ["logic"] * 4
+
+
+def test_plain_llm_bad_json_gives_no_analysis_and_no_retry():
+    class Bad:
+        calls = 0
+
+        def invoke(self, messages):
+            Bad.calls += 1
+            return AIMessage(content="не json")
+    rows = evaluate(ITEMS[:1], load_tasks(), mode="plain_llm", llm=Bad(), log=lambda *_: None)
+    assert Bad.calls == 4 and all(r["predicted"] is None and r["json_valid_first_try"] is False for r in rows)
+
+
 def test_errors_do_not_stop_the_run():
     class Broken:
         def bind_tools(self, tools):

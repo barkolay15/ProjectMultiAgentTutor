@@ -5,7 +5,7 @@ import json
 
 from langchain_core.messages import AIMessage
 
-from agents.checker.agent import analyze, looks_like_solution
+from agents.checker.agent import allowed_categories, analyze, looks_like_solution
 from schemas.messages import CheckRequest
 from unittest.mock import Mock
 from httpx import ConnectTimeout
@@ -21,9 +21,9 @@ def tool_call():
 
 
 def analysis(summary="Код суммирует все числа, а нужны только чётные.",
-             hint="Спросите, какие элементы списка должны попадать в сумму."):
+             hint="Спросите, какие элементы списка должны попадать в сумму.", category="logic"):
     return AIMessage(content=json.dumps({
-        "task_id": "sample/sum_even", "category": "logic",
+        "task_id": "sample/sum_even", "category": category,
         "summary": summary, "hint_for_tutor": hint}, ensure_ascii=False))
 
 
@@ -102,6 +102,41 @@ def test_stats_when_model_skips_tool():
     st = {}
     analyze(REQ(WRONG), FakeLLM([analysis(), analysis()]), st)
     assert st["tool_called_by_model"] is False
+
+
+def test_category_must_match_verdict_then_fixed():
+    # WRONG даёт AssertionError: категория syntax несовместима, модель просят исправиться
+    llm = FakeLLM([tool_call(), analysis(category="syntax"), analysis(category="edge_case")])
+    st = {}
+    verdict, ana = analyze(REQ(WRONG), llm, st)
+    assert ana is not None and ana.category == "edge_case"
+    assert st["retries"] == 1 and st["no_code_first_try"] is False
+
+
+def test_inconsistent_category_every_time_gives_no_analysis():
+    bad = analysis(category="timeout")
+    llm = FakeLLM([tool_call(), bad, bad, bad])
+    verdict, ana = analyze(REQ(WRONG), llm)
+    assert not verdict.passed and ana is None
+
+
+def test_nameerror_cannot_be_syntax():
+    code = "def sum_even(numbers):\n    return sum(x for x in nums if x % 2 == 0)"
+    llm = FakeLLM([tool_call(), analysis(category="syntax"), analysis(category="runtime")])
+    verdict, ana = analyze(REQ(code), llm)
+    assert verdict.error_type == "NameError" and ana.category == "runtime"
+
+
+def test_allowed_categories():
+    from schemas.messages import CheckVerdict
+    mk = lambda et, passed=False: CheckVerdict(task_id="t", passed=passed, error_type=et)
+    assert allowed_categories(mk("SyntaxError")) == {"syntax"}
+    assert allowed_categories(mk("Timeout")) == {"timeout"}
+    assert allowed_categories(mk("RuntimeCrash")) == {"timeout"}
+    assert allowed_categories(mk("AssertionError")) == {"logic", "edge_case"}
+    assert allowed_categories(mk("NameError")) == {"runtime"}
+    assert allowed_categories(mk("UnknownTask")) is None
+    assert allowed_categories(mk(None, True)) is None
 
 
 def test_looks_like_solution():

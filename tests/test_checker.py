@@ -46,6 +46,22 @@ def test_print_does_not_break_verdict():
     assert r.passed
 
 
+def test_test_counts_for_wrong_answer():
+    r = v("sample/sum_even", "def sum_even(numbers):\n    return sum(numbers)")
+    assert r.tests_total is not None and r.tests_passed == r.tests_total - len(r.failed_tests)
+    assert 0 <= r.tests_passed < r.tests_total
+
+
+def test_test_counts_for_correct_code():
+    r = v("sample/sum_even", "def sum_even(numbers):\n    return sum(x for x in numbers if x % 2 == 0)")
+    assert r.tests_passed == r.tests_total and r.tests_total > 0
+
+
+def test_test_counts_when_tests_did_not_run():
+    r = v("sample/sum_even", "def sum_even(numbers)\n    return 0")
+    assert r.tests_total > 0 and r.tests_passed is None      # код не загрузился, тесты не запускались
+
+
 def test_unknown_task():
     r = v("nope/1", "x = 1")
     assert not r.passed and r.error_type == "UnknownTask"

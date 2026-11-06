@@ -31,7 +31,7 @@ MARK = "@@RESULT@@"
 code = open(sys.argv[1], encoding="utf-8").read()
 tests = json.load(open(sys.argv[2], encoding="utf-8"))
 ns = {}
-out = {"error_type": None, "traceback_short": None, "failed": [], "details": []}
+out = {"error_type": None, "traceback_short": None, "failed": [], "details": [], "ran": False}
 
 
 def got_value(t):
@@ -52,6 +52,7 @@ except BaseException as e:
     out["error_type"] = type(e).__name__
     out["traceback_short"] = "".join(traceback.format_exception_only(type(e), e)).strip()[:300]
 else:
+    out["ran"] = True
     for t in tests:
         try:
             exec(t, ns)
@@ -101,23 +102,26 @@ def run_tests(task: dict, student_code: str, timeout: float = 5.0) -> CheckVerdi
                 env={}, preexec_fn=_limits if sys.platform != "win32" else None,
             )
         except subprocess.TimeoutExpired:
-            return CheckVerdict(task_id=tid, passed=False, error_type="Timeout",
+            return CheckVerdict(task_id=tid, passed=False, error_type="Timeout", tests_total=len(task["tests"]),
                                 traceback_short=f"Код работает дольше {timeout} с")
 
     marker = "@@RESULT@@"
     line = next((ln for ln in reversed(proc.stdout.splitlines()) if ln.startswith(marker)), None)
     if line is None:  # процесс упал до вывода результата (например, по лимиту CPU)
-        return CheckVerdict(task_id=tid, passed=False, error_type="RuntimeCrash",
+        return CheckVerdict(task_id=tid, passed=False, error_type="RuntimeCrash", tests_total=len(task["tests"]),
                             traceback_short=(proc.stderr or "нет вывода")[-300:])
     res = json.loads(line[len(marker):])
     failed = res["failed"]
+    total = len(task["tests"])
+    passed_count = total - len(failed) if res.get("ran") else None   # тесты не запускались, если код не загрузился
     if res["error_type"] is None and not failed:
-        return CheckVerdict(task_id=tid, passed=True)
+        return CheckVerdict(task_id=tid, passed=True, tests_total=total, tests_passed=total)
     return CheckVerdict(
         task_id=tid, passed=False, failed_tests=failed,
         failed_details=res.get("details", []),
         error_type=res["error_type"] or "AssertionError",
         traceback_short=res["traceback_short"],
+        tests_total=total, tests_passed=passed_count,
     )
 
 

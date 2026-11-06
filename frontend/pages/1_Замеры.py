@@ -14,7 +14,7 @@ import streamlit as st
 RESULTS_DIR = Path(os.getenv("TUTOR_RESULTS_DIR")
                    or Path(__file__).resolve().parents[2] / "benchmarks" / "results")
 
-MODE_NAMES = {"baseline": "Правило без модели", "llm": "GigaChat"}
+MODE_NAMES = {"baseline": "Правило без модели", "plain_llm": "GigaChat без обвязки", "llm": "GigaChat + тесты и проверки"}
 TYPE_ORDER = ["syntax", "logic", "edge_case", "runtime", "timeout", "other"]
 TYPE_NAMES = {
     "syntax": "синтаксис", "logic": "логика", "edge_case": "граничный случай",
@@ -57,21 +57,22 @@ def fmt(value, percent: bool) -> str:
     return f"{value * 100:.0f}%" if percent else f"{value:g}"
 
 
-def comparison_table(base: dict | None, llm: dict | None) -> pd.DataFrame:
+def comparison_table(base: dict | None, llm: dict | None, plain: dict | None = None) -> pd.DataFrame:
     rows = []
     for key, title, percent in METRICS:
-        rows.append({
-            "Показатель": title,
-            MODE_NAMES["baseline"]: fmt(base["summary"].get(key), percent) if base else "—",
-            MODE_NAMES["llm"]: fmt(llm["summary"].get(key), percent) if llm else "—",
-        })
+        row = {"Показатель": title,
+               MODE_NAMES["baseline"]: fmt(base["summary"].get(key), percent) if base else "—"}
+        if plain:
+            row[MODE_NAMES["plain_llm"]] = fmt(plain["summary"].get(key), percent)
+        row[MODE_NAMES["llm"]] = fmt(llm["summary"].get(key), percent) if llm else "—"
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
-def accuracy_by_type(base: dict | None, llm: dict | None) -> pd.DataFrame:
+def accuracy_by_type(base: dict | None, llm: dict | None, plain: dict | None = None) -> pd.DataFrame:
     """Строки: типы ошибок, которые есть хотя бы в одном прогоне. Значения в процентах."""
     data = {}
-    for mode, run in (("baseline", base), ("llm", llm)):
+    for mode, run in (("baseline", base), ("plain_llm", plain), ("llm", llm)):
         if run:
             data[MODE_NAMES[mode]] = run["summary"].get("accuracy_by_type", {})
     types = [t for t in TYPE_ORDER if any(t in d for d in data.values())]
@@ -116,22 +117,24 @@ def main() -> None:
                 "python3 -m benchmarks.eval_checker --mode llm --pause 2", language="bash")
         return
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         base = pick(runs, "baseline", "Прогон без модели")
     with c2:
-        llm = pick(runs, "llm", "Прогон с GigaChat")
+        plain = pick(runs, "plain_llm", "Прогон GigaChat без обвязки")
+    with c3:
+        llm = pick(runs, "llm", "Прогон GigaChat с проверяющим")
 
     st.subheader("Сравнение")
-    st.dataframe(comparison_table(base, llm), hide_index=True)
+    st.dataframe(comparison_table(base, llm, plain), hide_index=True)
 
-    n_values = [r["summary"].get("n_cases") for r in (base, llm) if r]
+    n_values = [r["summary"].get("n_cases") for r in (base, plain, llm) if r]
     if n_values and min(n_values) < 30:
         n = min(n_values)
         st.caption(f"Мутантов мало ({n}): один промах меняет точность примерно на {100 / n:.0f}%. "
                    "Это не окончательный результат.")
 
-    by_type = accuracy_by_type(base, llm)
+    by_type = accuracy_by_type(base, llm, plain)
     if not by_type.empty:
         st.subheader("Точность по типам ошибок, %")
         try:
