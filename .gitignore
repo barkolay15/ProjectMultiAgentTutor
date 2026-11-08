@@ -9,3 +9,6 @@ __pycache__/
 chroma_db/
 .DS_Store
 benchmarks/results/
+
+# база памяти агента (SQLite)
+data/
