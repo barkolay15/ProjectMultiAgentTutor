@@ -26,6 +26,12 @@ def with_real_tutor(agents: Agents) -> Agents:
     return dataclasses.replace(agents, tutor=run_tutor)
 
 
+def with_real_memory(agents: Agents) -> Agents:
+    from agents.memory.agent import get_profile, update_student_state
+
+    return dataclasses.replace(agents, memory_get=get_profile, memory_update=update_student_state)
+
+
 def with_real_checker(agents: Agents, llm) -> Agents:
     from agents.checker.agent import analyze as checker_analyze
 
