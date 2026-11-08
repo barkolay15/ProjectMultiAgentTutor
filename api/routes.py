@@ -33,6 +33,8 @@ router = APIRouter()
 
 # По умолчанию заглушки. USE_REAL_CHECKER=1 подключает настоящего проверяющего (нужен ключ в .env).
 _agents: Agents = stub_agents()
+from core.adapters import with_real_memory  # память без ключа, подключается всегда
+_agents = with_real_memory(_agents)
 _real_tutor = bool(os.getenv("GIGACHAT_CREDENTIALS"))
 if _real_tutor:
     from core.adapters import with_real_tutor
