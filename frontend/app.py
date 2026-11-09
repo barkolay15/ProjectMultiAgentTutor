@@ -41,6 +41,7 @@ from frontend.helpers import (
     task_rows,
     timings_table,
     turn_error_text,
+    verdict_counts_text,
     verdict_info,
 )
 from frontend.style import apply_style
@@ -189,9 +190,10 @@ with st.sidebar:
     if bank:
         st.progress(len(set(solved)) / len(bank), text=solved_summary(solved, len(bank)))
 
-    with st.popover("Начать заново"):
-        st.write("Диалог, выбранная задача и прогресс этого студента будут сброшены.")
-        if st.button("Да, начать заново", key="confirm_reset", disabled=not api_ok):
+    with st.popover("Сбросить диалог"):
+        st.write("Диалог, выбранная задача, список решённых задач и черновики будут сброшены. "
+                 "Профиль обучения в памяти сохраняется.")
+        if st.button("Да, сбросить диалог", key="confirm_reset", disabled=not api_ok):
             try:
                 client.reset(student_id)
             except ApiError as e:
@@ -283,6 +285,8 @@ def render_agent_details(d: dict) -> None:
             v = verdict_info(d.get("verdict"))
             if v:
                 st.markdown(f"**Вердикт проверяющего:** {v['icon']} {v['text']}")
+                if counts := verdict_counts_text(d.get("verdict")):
+                    st.caption(counts)
                 if d["verdict"].get("error_type"):
                     st.caption(f"Тип ошибки: {d['verdict']['error_type']}")
                 if d["verdict"].get("failed_tests"):
@@ -322,6 +326,8 @@ def render_message(item: dict) -> None:
         v = verdict_info(d.get("verdict"))
         if v:
             badges.append(f":{v['color']}[{v['icon']} {v['text']}]")
+            if counts := verdict_counts_text(d.get("verdict")):
+                badges.append(counts)
         if not (v and v["kind"] == "pass"):   # после успеха уровень подсказки не показываем
             badges.append(hint_text(d.get("hint_level", 1)))
         if d.get("status") != "ok":
@@ -471,13 +477,16 @@ def render_result(code: str) -> bool:
                     st.code(detail["test"], language="python")
                     if not detail["call"] and detail["got"] is not None:
                         st.text(f"Получено: {detail['got']}")
-                    if data["verdict"].get("traceback_short"):
-                        st.text(data["verdict"]["traceback_short"])
             if data["verdict"].get("error_type") not in (None, "AssertionError"):
                 st.caption(f"Ошибка выполнения: {data['verdict']['error_type']}")
+            if reason := data["verdict"].get("traceback_short"):
+                with st.expander("Причина ошибки"):
+                    st.code(reason, language="text")
             a = data.get("analysis")
             if a:
                 st.markdown(f"**Что не так:** {category_label(a['category'])}. {a['summary']}")
+        if counts := verdict_counts_text(data.get("verdict")):
+            st.caption(counts)
         st.caption(f"{hint_text(data.get('hint_level', 1)) if v['kind'] == 'fail' else 'Задача решена'}"
                    f" · {data.get('total_seconds', 0):.1f} с")
         if data.get("status") != "ok":

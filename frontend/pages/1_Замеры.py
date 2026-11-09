@@ -1,4 +1,4 @@
-"""Страница «Замеры»: результаты benchmarks/eval_checker.py (правило без модели и GigaChat).
+"""Страница «Замеры»: правило, голая модель и проверяющий с тестами.
 
 Страница подключена к меню слева через st.navigation в frontend/app.py.
 Данные берутся из benchmarks/results/checker_*.json (папка в .gitignore: сначала запустите замер).
@@ -22,6 +22,8 @@ TYPE_NAMES = {
 }
 # (ключ в summary, подпись, процент?)
 METRICS = [
+    ("n_cases", "Всего мутантов", False),
+    ("n_errors", "Сбоев прогона", False),
     ("category_accuracy", "Точность по типам ошибок", True),
     ("json_valid_first", "Валидный JSON с первой попытки", True),
     ("no_code_first", "Без кода в ответе с первой попытки", True),
@@ -39,9 +41,16 @@ def load_runs(folder: Path = RESULTS_DIR) -> list[dict]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             meta, summary = data["meta"], data["summary"]
-        except (OSError, ValueError, KeyError):
+            if not isinstance(meta, dict) or not isinstance(summary, dict) or meta.get("mode") not in MODE_NAMES:
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
             continue
-        runs.append({"path": path, "meta": meta, "summary": summary})
+        rows = data.get("rows")
+        cases = frozenset((row.get("task_id"), row["variant_id"], row.get("expected"))
+                          for row in rows if isinstance(row, dict)
+                          and all(isinstance(row.get(key), str) for key in ("task_id", "variant_id", "expected"))) \
+            if isinstance(rows, list) else frozenset()
+        runs.append({"path": path, "meta": meta, "summary": summary, "cases": cases})
     runs.sort(key=lambda r: r["meta"].get("time", ""), reverse=True)
     return runs
 
@@ -52,7 +61,7 @@ def run_label(run: dict) -> str:
 
 
 def fmt(value, percent: bool) -> str:
-    if value is None:
+    if not isinstance(value, (int, float)):
         return "—"
     return f"{value * 100:.0f}%" if percent else f"{value:g}"
 
@@ -62,8 +71,7 @@ def comparison_table(base: dict | None, llm: dict | None, plain: dict | None = N
     for key, title, percent in METRICS:
         row = {"Показатель": title,
                MODE_NAMES["baseline"]: fmt(base["summary"].get(key), percent) if base else "—"}
-        if plain:
-            row[MODE_NAMES["plain_llm"]] = fmt(plain["summary"].get(key), percent)
+        row[MODE_NAMES["plain_llm"]] = fmt(plain["summary"].get(key), percent) if plain else "—"
         row[MODE_NAMES["llm"]] = fmt(llm["summary"].get(key), percent) if llm else "—"
         rows.append(row)
     return pd.DataFrame(rows)
@@ -84,11 +92,12 @@ def accuracy_by_type(base: dict | None, llm: dict | None, plain: dict | None = N
 def confusion_table(run: dict) -> pd.DataFrame:
     """Строки: что ждали, столбцы: что получили."""
     conf = run["summary"].get("confusion", {})
-    expected = [t for t in TYPE_ORDER if t in conf]
-    got = [t for t in TYPE_ORDER if any(t in conf[e] for e in expected)]
+    expected = [t for t in TYPE_ORDER if t in conf] + sorted(set(conf) - set(TYPE_ORDER))
+    predictions = {t for e in expected for t in conf[e]}
+    got = [t for t in TYPE_ORDER if t in predictions] + sorted(predictions - set(TYPE_ORDER))
     table = pd.DataFrame([[conf[e].get(g, 0) for g in got] for e in expected],
-                         index=[TYPE_NAMES[e] for e in expected],
-                         columns=[TYPE_NAMES[g] for g in got])
+                         index=[TYPE_NAMES.get(e, e) for e in expected],
+                         columns=[TYPE_NAMES.get(g, g) for g in got])
     table.index.name = "Ждали ↓ / получили →"
     return table
 
@@ -107,13 +116,14 @@ def pick(runs: list[dict], mode: str, label: str):
 def main() -> None:
     st.set_page_config(page_title="Замеры проверяющего", page_icon="📊", layout="wide")
     st.title("Замеры проверяющего")
-    st.caption("Проверяющий определяет тип поломки в решении студента. Сравниваем простое правило без модели "
-               "и GigaChat на одних и тех же заведомо сломанных решениях (мутантах).")
+    st.caption("Проверяющий определяет тип поломки в решении студента. Сравниваем простое правило без модели, "
+               "GigaChat без обвязки и GigaChat с тестами и проверками на сломанных решениях (мутантах).")
 
     runs = load_runs()
     if not runs:
         st.warning("Результатов пока нет. Запустите замер из корня репозитория и обновите страницу:")
         st.code("python3 -m benchmarks.eval_checker --mode baseline\n"
+                "python3 -m benchmarks.eval_checker --mode plain_llm --pause 2\n"
                 "python3 -m benchmarks.eval_checker --mode llm --pause 2", language="bash")
         return
 
@@ -127,12 +137,26 @@ def main() -> None:
 
     st.subheader("Сравнение")
     st.dataframe(comparison_table(base, llm, plain), hide_index=True)
+    st.caption("Точность рассчитана по случаям без сбоев; сбои указаны отдельно.")
 
-    n_values = [r["summary"].get("n_cases") for r in (base, plain, llm) if r]
-    if n_values and min(n_values) < 30:
-        n = min(n_values)
-        st.caption(f"Мутантов мало ({n}): один промах меняет точность примерно на {100 / n:.0f}%. "
-                   "Это не окончательный результат.")
+    selected = [r for r in (base, plain, llm) if r]
+    n_values = [r["summary"]["n_cases"] for r in selected
+                if type(r["summary"].get("n_cases")) is int]
+    case_sets = [r["cases"] for r in selected if r.get("cases")]
+    if len(set(n_values)) > 1 or (case_sets and any(cases != case_sets[0] for cases in case_sets[1:])):
+        st.warning("Наборы мутантов в выбранных прогонах различаются. Для сравнения запустите режимы на одном наборе.")
+    if any(r["summary"].get("n_errors", 0) for r in selected):
+        st.warning("В выбранных прогонах есть сбои. Они не входят в расчёт точности.")
+    usable = [r["summary"]["n_cases"] - r["summary"].get("n_errors", 0) for r in selected
+              if type(r["summary"].get("n_cases")) is int
+              and type(r["summary"].get("n_errors", 0)) is int]
+    if usable and min(usable) < 30:
+        n = min(usable)
+        if n > 0:
+            st.caption(f"Случаев без сбоев мало ({n}): один промах меняет точность примерно на {100 / n:.0f}%. "
+                       "Это не окончательный результат.")
+        else:
+            st.info("В выбранном прогоне нет случаев без сбоев для расчёта точности.")
 
     by_type = accuracy_by_type(base, llm, plain)
     if not by_type.empty:
@@ -152,9 +176,11 @@ def main() -> None:
             "Режим": MODE_NAMES.get(r["meta"].get("mode"), r["meta"].get("mode")),
             "Промпт": r["meta"].get("prompt_version"),
             "Мутантов": r["summary"].get("n_cases"),
+            "Сбоев": r["summary"].get("n_errors"),
             "Точность": fmt(r["summary"].get("category_accuracy"), True),
             "Файл": r["path"].name,
         } for r in runs]), hide_index=True)
 
 
-main()
+if __name__ == "__main__":
+    main()
