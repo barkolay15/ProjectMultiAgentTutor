@@ -191,8 +191,8 @@ with st.sidebar:
         st.progress(len(set(solved)) / len(bank), text=solved_summary(solved, len(bank)))
 
     with st.popover("Сбросить диалог"):
-        st.write("Диалог, выбранная задача, список решённых задач и черновики будут сброшены. "
-                 "Профиль обучения в памяти сохраняется.")
+        st.write("Диалог, выбранная задача и черновики будут сброшены. "
+                 "Профиль обучения в памяти сохраняется вместе с решёнными задачами.")
         if st.button("Да, сбросить диалог", key="confirm_reset", disabled=not api_ok):
             try:
                 client.reset(student_id)
