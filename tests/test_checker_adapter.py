@@ -1,8 +1,8 @@
 """Адаптер проверяющего: оркестратор + настоящий agents.checker с поддельной моделью (без сети).
 Запуск из корня проекта: python3 -m tests.test_checker_adapter
 """
-from core.adapters import with_real_checker
-from core.orchestrator import run_turn
+from core.adapters import with_real_checker, with_real_memory
+from core.orchestrator import run_turn, stream_turn
 from core.stubs import stub_agents
 from tests.test_checker_agent import RIGHT, WRONG, FakeLLM, analysis, tool_call
 from langchain_core.messages import AIMessage
@@ -91,6 +91,35 @@ def test_identical_parallel_submissions_keep_their_own_analysis(monkeypatch):
     assert [out["analysis"].summary for out in results] == ["student_one", "student_two"]
     assert all(not out["errors"] for out in results)
     assert all("_analysis" not in out["verdict"].model_dump() for out in results)
+
+
+def test_stub_checker_does_not_train_real_memory():
+    from agents.memory.agent import get_profile
+
+    agents = with_real_memory(stub_agents())
+    for code in (WRONG, "def strlen(s): return len(s)"):
+        out = run_turn("demo_memory", "check", code=code, agents=agents)
+        assert out["status"] == "ok" and out["memory_event"].source == "stub"
+    profile = get_profile("demo_memory")
+    assert profile.level == "beginner" and profile.weak_topics == []
+    assert profile.typical_errors == [] and profile.solved_task_ids == []
+
+
+@pytest.mark.parametrize("memory_first", [True, False])
+def test_real_checker_records_task_once_in_both_adapter_orders(memory_first):
+    from agents.memory.agent import get_profile
+
+    model = FakeLLM([tool_call(), tool_call()])
+    if memory_first:
+        agents = with_real_checker(with_real_memory(stub_agents()), model)
+    else:
+        agents = with_real_memory(with_real_checker(stub_agents(), model))
+    first = run_turn("real_memory", "check", code=RIGHT, task=TASK, agents=agents)
+    second = list(stream_turn("real_memory", "check again", code=RIGHT, task=TASK, agents=agents))[-1]["state"]
+    assert first["verdict"].passed and second["verdict"].passed
+    assert first["memory_event"].source == second["memory_event"].source == "real"
+    profile = get_profile("real_memory")
+    assert profile.level == "beginner" and profile.solved_task_ids == [TASK.task_id]
 
 
 if __name__ == "__main__":

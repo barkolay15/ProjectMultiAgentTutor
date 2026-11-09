@@ -58,6 +58,8 @@ class MemoryEvent(BaseModel):
     topic: str = Field(description="Тема, например 'циклы'")
     result: Literal["pass", "fail", "hint_used"]
     error_type: str | None = None
+    task_id: str | None = None
+    source: Literal["real", "stub"] = "real"
 
 
 class StudentProfile(BaseModel):
@@ -66,6 +68,7 @@ class StudentProfile(BaseModel):
     level: Literal["beginner", "intermediate", "advanced"] = "beginner"
     weak_topics: list[str] = Field(default_factory=list)
     typical_errors: list[str] = Field(default_factory=list)
+    solved_task_ids: list[str] = Field(default_factory=list)
 
 
 # ---------- Постановщик (E) ----------
@@ -75,6 +78,7 @@ class TaskRequest(BaseModel):
     student_id: str
     topic: str
     level: Literal["beginner", "intermediate", "advanced"] = "beginner"
+    solved_task_ids: list[str] = Field(default_factory=list)
 
 
 class TaskExample(BaseModel):
@@ -88,6 +92,7 @@ class Task(BaseModel):
     statement: str
     topic: str
     example: TaskExample | None = None
+    level: Literal["beginner", "intermediate", "advanced"] | None = None
 
 
 # ---------- Тьютор (A) ----------

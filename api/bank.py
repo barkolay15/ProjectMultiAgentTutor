@@ -45,7 +45,10 @@ def _visible(task_id: str) -> bool:
 
 
 def _as_task(t: dict) -> Task:
-    return Task(task_id=t["task_id"], statement=t["statement"], topic=TOPIC, example=_example(t))
+    level = t.get("level") or t.get("difficulty")
+    level = {"easy": "beginner", "medium": "intermediate", "hard": "advanced"}.get(level, level)
+    return Task(task_id=t["task_id"], statement=t["statement"], topic=t.get("topic") or TOPIC,
+                example=_example(t), level=level if level in ("beginner", "intermediate", "advanced") else None)
 
 
 def _example(t: dict) -> dict | None:

@@ -239,6 +239,26 @@ def test_session_changes_wait_for_inflight_turn(monkeypatch, path, mutation):
         assert sess["task"] is None and sess["history"] == [] and sess["solved"] == []
 
 
+def test_next_task_uses_persistent_progress_after_session_reset(monkeypatch):
+    from api import bank
+    from core.adapters import with_real_memory
+
+    # Доверенный поддельный проверяющий позволяет проверить интеграцию без модели и сети.
+    agents = with_real_memory(dataclasses.replace(stub_agents(), tutor=fake_tutor,
+                              next_task=routes._bank_next_task, checks_are_real=True))
+    monkeypatch.setattr(routes, "_agents", agents)
+    student = "api_persistent_progress"
+    task = bank.all_tasks()[0]
+    client.post(f"/session/{student}/task", json={"task_id": task.task_id})
+    passed = post(student, code=GOOD).json()
+    assert passed["verdict"]["passed"]
+    client.post(f"/reset/{student}")
+    resumed = post(student, message="предложи задачу").json()
+    assert resumed["status"] == "ok"
+    assert resumed["task"]["task_id"] != task.task_id
+    assert task.task_id in resumed["solved"]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

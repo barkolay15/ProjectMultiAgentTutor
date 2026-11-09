@@ -1,7 +1,7 @@
 """Заглушки агентов: граф работает целиком без ключей и без сети.
 
-Когда агенты A, C, D, E смержат свои модули, меняйте нужное поле Agents
-на их функцию (подробности в комментариях ниже). Тесты и демо остаются на заглушках.
+Настоящие агенты подключаются адаптерами из core/adapters.py.
+Тесты и демо остаются на заглушках; их результаты не обучают настоящую память.
 """
 from core.orchestrator import Agents
 from schemas.messages import (
@@ -56,4 +56,4 @@ def stub_agents() -> Agents:
             text = "С чего, по-вашему, стоит начать решение этой задачи?"
         return TutorReply(message=text, hint_level=req.hint_level).model_dump_json()
 
-    return Agents(memory_get, memory_update, next_task, check, analyze, tutor)
+    return Agents(memory_get, memory_update, next_task, check, analyze, tutor, checks_are_real=False)

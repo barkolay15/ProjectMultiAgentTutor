@@ -53,4 +53,4 @@ def with_real_checker(agents: Agents, llm) -> Agents:
             raise ValueError("проверяющий не вернул разбор ошибки")
         return analysis
 
-    return dataclasses.replace(agents, check=check, analyze=analyze)
+    return dataclasses.replace(agents, check=check, analyze=analyze, checks_are_real=True)
