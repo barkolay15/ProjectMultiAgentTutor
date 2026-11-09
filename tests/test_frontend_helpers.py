@@ -23,6 +23,7 @@ from frontend.helpers import (
     task_rows,
     timings_table,
     turn_error_text,
+    verdict_counts_text,
     verdict_info,
 )
 
@@ -43,6 +44,21 @@ def test_verdict_info():
     assert verdict_info({"passed": True})["kind"] == "pass"
     bad = verdict_info({"passed": False})
     assert bad["kind"] == "fail" and bad["color"] == "red"
+
+
+def test_verdict_counts_use_checker_fields_and_keep_unknown_counts():
+    assert verdict_counts_text({"tests_total": 5, "tests_passed": 3}) == "Пройдено тестов: 3 из 5"
+    assert verdict_counts_text({"tests_total": 5, "tests_passed": 0}) == "Пройдено тестов: 0 из 5"
+    assert verdict_counts_text({"tests_total": 5, "tests_passed": None}) == "Всего тестов: 5; число пройденных неизвестно"
+    assert verdict_counts_text({"tests_total": 5, "tests_passed": 6}) == "Всего тестов: 5; число пройденных неизвестно"
+    assert verdict_counts_text({"failed_tests": ["assert f() == 1"]}) is None
+    assert verdict_counts_text(None) is None
+
+
+def test_export_includes_test_counts():
+    md = chat_to_markdown([{"role": "assistant", "text": "Подумайте ещё раз.", "details": {
+        "verdict": {"passed": False, "tests_total": 4, "tests_passed": 2}}}], "s1")
+    assert "Пройдено тестов: 2 из 4" in md
 
 
 def test_failed_test_details_uses_actual_result_and_literal_expected_value():

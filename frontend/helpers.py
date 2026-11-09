@@ -162,6 +162,17 @@ def verdict_info(verdict: dict | None) -> dict | None:
     return {"kind": "fail", "icon": "❌", "text": "Тесты не прошли", "color": "red"}
 
 
+def verdict_counts_text(verdict: dict | None) -> str | None:
+    """Счётчики настоящего проверяющего; у старого API и заглушки их может не быть."""
+    verdict = verdict or {}
+    total, passed = verdict.get("tests_total"), verdict.get("tests_passed")
+    if type(total) is not int or total <= 0:
+        return None
+    if type(passed) is int and 0 <= passed <= total:
+        return f"Пройдено тестов: {passed} из {total}"
+    return f"Всего тестов: {total}; число пройденных неизвестно"
+
+
 def failed_test_details(verdict: dict) -> dict | None:
     """Разбираем простой assert без выполнения кода; сложные проверки показываем целиком."""
     details = verdict.get("failed_details") or []
@@ -290,6 +301,8 @@ def chat_to_markdown(chat: list[dict], student_id: str) -> str:
         d = item.get("details") or {}
         v = verdict_info(d.get("verdict"))
         if v:
-            lines.append(f"_{v['icon']} {v['text']}; {hint_text(d.get('hint_level', 1)).lower()}_")
+            counts = verdict_counts_text(d.get("verdict"))
+            lines.append(f"_{v['icon']} {v['text']}; {hint_text(d.get('hint_level', 1)).lower()}"
+                         + (f"; {counts}" if counts else "") + "_")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"

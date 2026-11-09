@@ -275,3 +275,38 @@ def test_stale_task_error_keeps_code_and_allows_reselecting_current_task(ui):
     api.set_task.assert_called_once_with("s1", BANK[0]["task_id"])
     assert app.text_area[0].value == CODE
     assert "s1" not in app.session_state["failed_requests"]
+
+
+@pytest.mark.parametrize("error_type, passed, reason", [
+    ("AssertionError", 2, "AssertionError: expected a different value"),
+    ("SyntaxError", None, "SyntaxError: expected ':'"),
+    ("Timeout", None, "Код работает дольше 5 с"),
+])
+def test_checker_counts_and_failure_reason_are_visible(ui, error_type, passed, reason):
+    app, api = ui
+    original = api.chat_stream.side_effect
+
+    def stream(*args, **kwargs):
+        events = list(original(*args, **kwargs))
+        verdict = events[0]["data"]["verdict"]
+        verdict.update(tests_total=3, tests_passed=passed, error_type=error_type, traceback_short=reason)
+        if passed is None:
+            verdict.update(failed_details=[], failed_tests=[])
+        return iter(events)
+
+    api.chat_stream.side_effect = stream
+    app.run().text_area[0].input(CODE).run()
+    app.button(key="run").click().run()
+    assert not app.exception
+    assert any(item.value == reason for item in app.code)
+    expected = "Пройдено тестов: 2 из 3" if passed is not None else "Всего тестов: 3; число пройденных неизвестно"
+    assert any(expected in item.value for item in app.caption)
+    if passed is None:
+        assert not any("Пройдено тестов: 0" in item.value for item in app.caption)
+
+
+def test_reset_explains_that_learning_profile_is_preserved(ui):
+    app, _ = ui
+    app.run()
+    assert not app.exception
+    assert any("Профиль обучения в памяти сохраняется" in item.value for item in app.markdown)
