@@ -129,6 +129,13 @@ def get_profile(student_id: str, err: str | None = None) -> StudentProfile:
     )
 
 
+def reset_student_memory(student_id: str) -> None:
+    """Очистить профиль и решённые задачи только указанного студента."""
+    with closing(_connect()) as conn, conn:
+        conn.execute("DELETE FROM stats WHERE student_id = ?", (student_id,))
+        conn.execute("DELETE FROM solved_tasks WHERE student_id = ?", (student_id,))
+
+
 def reset_memory() -> None:
     """Очистить всю базу (для тестов)."""
     with closing(_connect()) as conn, conn:

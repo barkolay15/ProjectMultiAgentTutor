@@ -2,7 +2,7 @@
 import os
 import sqlite3
 
-from agents.memory.agent import get_profile, reset_memory, update_student_state
+from agents.memory.agent import get_profile, reset_memory, reset_student_memory, update_student_state
 from schemas.messages import MemoryEvent
 
 
@@ -154,3 +154,32 @@ def test_reset_clears_completed_tasks_as_well_as_stats():
     assert get_profile("s1").solved_task_ids == []
     update_student_state(ev("pass").model_copy(update={"task_id": "task/one"}))
     assert get_profile("s1").solved_task_ids == ["task/one"]
+
+
+def test_student_reset_preserves_other_profiles_and_allows_task_to_be_counted_again():
+    for student in ("s1", "other"):
+        update_student_state(ev("fail", sid=student, error_type="SyntaxError"))
+        update_student_state(ev("pass", sid=student).model_copy(update={"task_id": "task/one"}))
+    other = get_profile("other")
+    reset_student_memory("s1")
+    assert get_profile("s1").solved_task_ids == []
+    assert get_profile("s1").typical_errors == []
+    assert get_profile("other") == other
+    update_student_state(ev("pass").model_copy(update={"task_id": "task/one"}))
+    assert get_profile("s1").solved_task_ids == ["task/one"]
+    reset_student_memory("nobody")
+    assert get_profile("other") == other
+
+
+def test_student_reset_rolls_back_if_deleting_progress_fails():
+    import pytest
+
+    update_student_state(ev("fail", error_type="SyntaxError"))
+    update_student_state(ev("pass").model_copy(update={"task_id": "task/one"}))
+    before = get_profile("s1")
+    with sqlite3.connect(os.environ["MEMORY_DB"]) as conn:
+        conn.execute("CREATE TRIGGER prevent_progress_reset BEFORE DELETE ON solved_tasks "
+                     "BEGIN SELECT RAISE(ABORT, 'reset failed'); END")
+    with pytest.raises(sqlite3.IntegrityError, match="reset failed"):
+        reset_student_memory("s1")
+    assert get_profile("s1") == before

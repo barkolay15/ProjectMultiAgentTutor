@@ -50,6 +50,8 @@ class Agents:
     analyze: AgentFn                             # ({"verdict", "student_code"}) -> ErrorAnalysis
     tutor: AgentFn                               # (TutorRequest) -> TutorReply
     checks_are_real: bool = True                 # результаты заглушки не обучают настоящую память
+    memory_reset: Callable[[str], None] | None = None
+    memory_backend: str = "stub"
 
 
 def call_validated(fn: AgentFn, request: Any, model: type[BaseModel],

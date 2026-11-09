@@ -19,9 +19,12 @@ from api import bank
 from agents.checker.prompts import PROMPT_VERSION as CHECKER_PROMPT_VERSION
 from core.llm_client import MODEL_NAME
 from core.metrics import summarize
-from core.orchestrator import MAX_STEPS, Agents, run_turn, stream_turn
+from core.orchestrator import MAX_STEPS, Agents, call_validated, run_turn, stream_turn
 from core.stubs import stub_agents
 from core.task_selection import select_task
+from schemas.messages import StudentProfile
+
+STUDENT_ID_PATTERN = r"^[\w.\-]+$"
 
 log = logging.getLogger("tutor.api")
 if not log.handlers:
@@ -80,7 +83,7 @@ def _student_lock(student_id: str) -> threading.Lock:
 
 
 class ChatRequest(BaseModel):
-    student_id: str = Field(min_length=1, max_length=64, pattern=r"^[\w.\-]+$")
+    student_id: str = Field(min_length=1, max_length=64, pattern=STUDENT_ID_PATTERN)
     message: str = Field(min_length=1, max_length=2000)
     code: str | None = Field(default=None, max_length=10000)
     task_id: str | None = Field(default=None, min_length=1, max_length=100)
@@ -118,6 +121,7 @@ def info():
     return {
         "checker": "real" if _real_checker else "stub",
         "tutor": "llm" if _real_tutor else "stub",
+        "memory": _agents.memory_backend,
         "max_steps": MAX_STEPS,
         "bank": len(bank.all_tasks()),
         "demo": _demo_enabled(),
@@ -225,20 +229,49 @@ def chat_stream(req: ChatRequest):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+def _read_profile(student_id: str) -> StudentProfile:
+    profile, _ = call_validated(_agents.memory_get, student_id, StudentProfile)
+    if profile.student_id != student_id:
+        raise ValueError("Память вернула профиль другого студента")
+    return profile
+
+
+@router.get("/profile/{student_id}", response_model=StudentProfile)
+def profile(student_id: str = Path(min_length=1, max_length=64, pattern=STUDENT_ID_PATTERN)):
+    """Свежий профиль обучения из подключённой памяти."""
+    with _student_lock(student_id):
+        try:
+            return _read_profile(student_id)
+        except Exception:
+            log.exception("profile read failed: student=%s", student_id)
+            raise HTTPException(status_code=503, detail="Память недоступна. Попробуйте позже.")
+
+
 @router.get("/session/{student_id}")
-def session(student_id: str = Path(min_length=1, max_length=64)):
-    """Состояние сессии: после обновления страницы интерфейс подтягивает отсюда диалог."""
-    with _state_lock:
-        sess = _sessions.get(student_id)
-        if sess is None:
-            return {"student_id": student_id, "hint_level": 1, "task": None, "history": [], "solved": []}
-        return {
-            "student_id": student_id,
-            "hint_level": sess["hint_level"],
-            "task": _dump(sess["task"]),
-            "history": list(sess["history"]),
-            "solved": list(sess["solved"]),
-        }
+def session(student_id: str = Path(min_length=1, max_length=64, pattern=STUDENT_ID_PATTERN)):
+    """Диалог из сессии и сохранённый прогресс из памяти, в том числе до первого хода."""
+    with _student_lock(student_id):
+        saved_profile, errors = None, []
+        try:
+            saved_profile = _read_profile(student_id)
+        except Exception as e:
+            log.exception("session profile read failed: student=%s", student_id)
+            errors.append(f"load_profile: {type(e).__name__}: {e}")
+        with _state_lock:
+            sess = _sessions.get(student_id)
+            if sess is None:
+                sess = _new_session()
+            if saved_profile is not None:
+                sess["solved"] = list(dict.fromkeys([*sess["solved"], *saved_profile.solved_task_ids]))
+            return {
+                "student_id": student_id,
+                "hint_level": sess["hint_level"],
+                "task": _dump(sess["task"]),
+                "history": list(sess["history"]),
+                "solved": list(sess["solved"]),
+                "profile": _dump(saved_profile),
+                "errors": errors,
+            }
 
 
 @router.get("/tasks")
@@ -252,7 +285,7 @@ class TaskChoice(BaseModel):
 
 
 @router.post("/session/{student_id}/task")
-def choose_task(choice: TaskChoice, student_id: str = Path(min_length=1, max_length=64)):
+def choose_task(choice: TaskChoice, student_id: str = Path(min_length=1, max_length=64, pattern=STUDENT_ID_PATTERN)):
     """Студент выбрал задачу из банка: подсказки начинаются заново с первого уровня."""
     task = bank.get_task(choice.task_id)
     if task is None:
@@ -276,11 +309,28 @@ def demo(task_id: str):
 
 
 @router.post("/reset/{student_id}")
-def reset(student_id: str = Path(min_length=1, max_length=64)):
+def reset(student_id: str = Path(min_length=1, max_length=64, pattern=STUDENT_ID_PATTERN)):
+    """Сбросить диалог; профиль и решённые задачи остаются в памяти."""
     with _student_lock(student_id):
         with _state_lock:
             _sessions.pop(student_id, None)
     return {"reset": student_id}
+
+
+@router.post("/reset/{student_id}/all")
+def reset_all(student_id: str = Path(min_length=1, max_length=64, pattern=STUDENT_ID_PATTERN)):
+    """Сбросить сессию и профиль одного студента после завершения его текущего хода."""
+    with _student_lock(student_id):
+        if _agents.memory_reset is None:
+            raise HTTPException(status_code=501, detail="Подключённая память не поддерживает сброс профиля.")
+        try:
+            _agents.memory_reset(student_id)
+        except Exception:
+            log.exception("profile reset failed: student=%s", student_id)
+            raise HTTPException(status_code=503, detail="Не удалось сбросить профиль. Попробуйте позже.")
+        with _state_lock:
+            _sessions.pop(student_id, None)
+    return {"reset": student_id, "profile_reset": True}
 
 
 @router.get("/metrics")

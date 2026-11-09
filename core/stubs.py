@@ -20,6 +20,9 @@ def stub_agents() -> Agents:
     def memory_update(event):                 # C: update_student_state
         return None
 
+    def memory_reset(student_id):
+        return None
+
     def next_task(req, err):                  # E: постановщик
         return Task(
             task_id="stub/strlen",
@@ -56,4 +59,5 @@ def stub_agents() -> Agents:
             text = "С чего, по-вашему, стоит начать решение этой задачи?"
         return TutorReply(message=text, hint_level=req.hint_level).model_dump_json()
 
-    return Agents(memory_get, memory_update, next_task, check, analyze, tutor, checks_are_real=False)
+    return Agents(memory_get, memory_update, next_task, check, analyze, tutor,
+                  checks_are_real=False, memory_reset=memory_reset)
