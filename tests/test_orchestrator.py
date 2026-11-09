@@ -85,7 +85,7 @@ def test_agent_exception_is_caught():
     def boom(req, err):
         raise RuntimeError("сеть упала")
 
-    out = run_turn("s1", "привет", agents=dataclasses.replace(stub_agents(), memory_get=boom))
+    out = run_turn("s1", "привет", agents=dataclasses.replace(stub_agents(), next_task=boom))
     assert out["status"] == "error"
     assert "RuntimeError" in out["errors"][0]
 
@@ -94,6 +94,13 @@ def test_step_limit():
     out = run_turn("s1", "привет", max_steps=1)
     assert out["status"] == "step_limit"
     assert out["reply"].message == FALLBACK_MESSAGE
+
+
+def test_step_limit_after_tutor_does_not_report_fully_completed_turn():
+    out = run_turn("limited", "check", code=GOOD, max_steps=4)
+    assert out["status"] == "step_limit" and out["verdict"].passed
+    assert out["reply"].message != FALLBACK_MESSAGE
+    assert "update_memory" not in nodes(out)
 
 
 def test_percentile_and_summary():
@@ -159,6 +166,78 @@ def test_stubs_never_use_live_tutor_even_with_credentials(monkeypatch):
     assert run_turn("offline", "привет")["status"] == "ok"
     assert list(stream_turn("offline", "привет"))[-1]["state"]["status"] == "ok"
     get_llm.assert_not_called()
+
+
+def test_memory_read_failure_uses_default_profile_and_keeps_turn_working():
+    def unavailable(student, err):
+        raise OSError("database unavailable")
+
+    out = run_turn("fallback", "подсказка", agents=dataclasses.replace(stub_agents(), memory_get=unavailable))
+    assert out["status"] == "ok"
+    assert out["profile"] == StudentProfile(student_id="fallback")
+    assert out["reply"].message != FALLBACK_MESSAGE
+    assert any("load_profile: OSError" in error for error in out["errors"])
+    assert "tutor" in nodes(out)
+
+
+def test_invalid_memory_reply_also_falls_back():
+    from unittest.mock import Mock
+
+    memory = Mock(return_value="not JSON")
+    out = run_turn("invalid_profile", "подсказка", agents=dataclasses.replace(stub_agents(), memory_get=memory))
+    assert out["status"] == "ok" and memory.call_count == 3
+    assert out["profile"].student_id == "invalid_profile"
+    assert any("load_profile:" in error for error in out["errors"])
+
+
+def test_memory_write_failure_keeps_verdict_and_tutor_reply_in_both_modes():
+    def unavailable(event):
+        raise OSError("database read-only")
+
+    agents = dataclasses.replace(stub_agents(), memory_update=unavailable)
+    for out in [run_turn("memory_write", "check", code=GOOD, agents=agents),
+                list(stream_turn("memory_write", "check", code=GOOD, agents=agents))[-1]["state"]]:
+        assert out["status"] == "ok" and out["verdict"].passed
+        assert out["reply"].message != FALLBACK_MESSAGE
+        assert out["memory_event"] is None
+        assert any("update_memory: OSError" in error for error in out["errors"])
+        assert out["next_task"] == out["task"]
+
+
+def test_task_request_receives_persistent_progress_and_weak_topic():
+    from schemas.messages import Task
+
+    requests = []
+    profile = StudentProfile(student_id="adaptive", level="intermediate", weak_topics=["строки"],
+                             solved_task_ids=["bank/solved"])
+
+    def pick(req, err):
+        requests.append(req)
+        return Task(task_id="bank/new", statement="Условие", topic=req.topic)
+
+    agents = dataclasses.replace(stub_agents(), memory_get=lambda *_: profile, next_task=pick)
+    out = run_turn("adaptive", "подбери задачу", agents=agents)
+    assert out["status"] == "ok"
+    assert requests[0].topic == "строки" and requests[0].level == "intermediate"
+    assert requests[0].solved_task_ids == ["bank/solved"]
+
+
+def test_checked_result_is_saved_even_if_tutor_crashes():
+    events = []
+
+    def boom(req, err):
+        raise RuntimeError("tutor offline")
+
+    agents = dataclasses.replace(stub_agents(), tutor=boom, memory_update=events.append, checks_are_real=True)
+    out = run_turn("tutor_failure", "check", code=GOOD, agents=agents)
+    assert out["status"] == "error" and out["verdict"].passed
+    assert out["reply"].message == FALLBACK_MESSAGE
+    assert len(events) == 1
+    assert events[0].result == "pass" and events[0].task_id == out["task"].task_id
+    assert events[0].source == "real"
+    events.clear()
+    run_turn("tutor_failure", "подсказка", agents=agents)
+    assert events == []  # Неуспешный запрос подсказки не является событием обучения.
 
 
 if __name__ == "__main__":

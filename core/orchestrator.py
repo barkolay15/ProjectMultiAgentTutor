@@ -49,6 +49,7 @@ class Agents:
     check: AgentFn                               # (CheckRequest) -> CheckVerdict
     analyze: AgentFn                             # ({"verdict", "student_code"}) -> ErrorAnalysis
     tutor: AgentFn                               # (TutorRequest) -> TutorReply
+    checks_are_real: bool = True                 # результаты заглушки не обучают настоящую память
 
 
 def call_validated(fn: AgentFn, request: Any, model: type[BaseModel],
@@ -106,7 +107,11 @@ def build_graph(agents: Agents):
     retries = lambda s, r: s.get("retries", 0) + r  # noqa: E731
 
     def load_profile(s: SessionState) -> dict:
-        profile, r = call_validated(agents.memory_get, s["student_id"], StudentProfile)
+        try:
+            profile, r = call_validated(agents.memory_get, s["student_id"], StudentProfile)
+        except Exception as e:
+            return {"profile": StudentProfile(student_id=s["student_id"]),
+                    "errors": list(s.get("errors", [])) + [f"load_profile: {type(e).__name__}: {e}"]}
         return {"profile": profile, "retries": retries(s, r)}
 
     def pick_task(s: SessionState) -> dict:
@@ -114,7 +119,8 @@ def build_graph(agents: Agents):
             return {}
         profile = s["profile"]
         topic = profile.weak_topics[0] if profile.weak_topics else DEFAULT_TOPIC
-        req = TaskRequest(student_id=s["student_id"], topic=topic, level=profile.level)
+        req = TaskRequest(student_id=s["student_id"], topic=topic, level=profile.level,
+                          solved_task_ids=profile.solved_task_ids)
         task, r = call_validated(agents.next_task, req, Task)
         return {"task": task, "retries": retries(s, r)}
 
@@ -157,15 +163,22 @@ def build_graph(agents: Agents):
             topic=task.topic if task else DEFAULT_TOPIC,
             result=result,
             error_type=verdict.error_type if verdict else None,
+            task_id=task.task_id if task else None,
+            source="real" if agents.checks_are_real else "stub",
         )
-        agents.memory_update(event)
+        try:
+            agents.memory_update(event)
+        except Exception as e:
+            return {"memory_event": None,
+                    "errors": list(s.get("errors", [])) + [f"update_memory: {type(e).__name__}: {e}"]}
         return {"memory_event": event}
 
     def finish(s: SessionState) -> dict:
         reply, verdict = s.get("reply"), s.get("verdict")
         status = s.get("status")
         if status != "error":
-            status = "ok" if reply is not None else "step_limit"
+            completed = bool(s.get("timings")) and s["timings"][-1]["node"] == "update_memory"
+            status = "ok" if reply is not None and completed else "step_limit"
         hint = _clamp_hint(s.get("hint_level", 1))
         if reply is None:
             reply = TutorReply(message=FALLBACK_MESSAGE, hint_level=hint)
@@ -194,6 +207,13 @@ def build_graph(agents: Agents):
     def after(next_node: str):
         return lambda s: "finish" if _stop(s) else next_node
 
+    def after_tutor(s: SessionState) -> str:
+        if s.get("step_count", 0) >= s.get("max_steps", MAX_STEPS):
+            return "finish"
+        if s.get("status") == "error" and s.get("verdict") is None:
+            return "finish"
+        return "update_memory"
+
     g = StateGraph(SessionState)
     for name, fn in [("load_profile", load_profile), ("pick_task", pick_task), ("check", check),
                      ("review", review), ("tutor", tutor), ("update_memory", update_memory),
@@ -214,7 +234,8 @@ def build_graph(agents: Agents):
         {"review": "review", "tutor": "tutor", "finish": "finish"},
     )
     g.add_conditional_edges("review", after("tutor"), {"tutor": "tutor", "finish": "finish"})
-    g.add_conditional_edges("tutor", after("update_memory"), {"update_memory": "update_memory", "finish": "finish"})
+    # Сбой тьютора не должен терять уже полученный вердикт для памяти.
+    g.add_conditional_edges("tutor", after_tutor, {"update_memory": "update_memory", "finish": "finish"})
     g.add_edge("update_memory", "finish")
     g.add_edge("finish", END)
     return g.compile()

@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS stats (
     PRIMARY KEY (student_id, kind, key)
 )
 """
+_SOLVED_SCHEMA = """
+CREATE TABLE IF NOT EXISTS solved_tasks (
+    student_id TEXT NOT NULL,
+    task_id    TEXT NOT NULL,
+    PRIMARY KEY (student_id, task_id)
+)
+"""
 _UPSERT = """
 INSERT INTO stats (student_id, kind, key, count) VALUES (?, ?, ?, 1)
 ON CONFLICT (student_id, kind, key) DO UPDATE SET count = count + 1
@@ -54,11 +61,14 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(path, timeout=10)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute(_SCHEMA)
+    conn.execute(_SOLVED_SCHEMA)
     return conn
 
 
 def update_student_state(event: MemoryEvent) -> None:
     """Записать, что произошло на шаге."""
+    if event.source == "stub":
+        return
     rows = []
     if event.result == "pass":
         rows.append(("pass", event.topic))
@@ -69,6 +79,13 @@ def update_student_state(event: MemoryEvent) -> None:
     else:  # "hint_used": студент написал без кода, это не ошибка
         rows.append(("hint", event.topic))
     with closing(_connect()) as conn, conn:  # conn как контекст = транзакция
+        if event.result == "pass" and event.task_id:
+            inserted = conn.execute(
+                "INSERT OR IGNORE INTO solved_tasks (student_id, task_id) VALUES (?, ?)",
+                (event.student_id, event.task_id),
+            )
+            if inserted.rowcount == 0:
+                return  # Повторная проверка не повышает уровень; всё в одной транзакции.
         conn.executemany(_UPSERT, [(event.student_id, k, v) for k, v in rows])
 
 
@@ -93,6 +110,9 @@ def get_profile(student_id: str, err: str | None = None) -> StudentProfile:
         rows = conn.execute(
             "SELECT kind, key, count FROM stats WHERE student_id = ?", (student_id,)
         ).fetchall()
+        solved = [row[0] for row in conn.execute(
+            "SELECT task_id FROM solved_tasks WHERE student_id = ? ORDER BY task_id", (student_id,)
+        )]
     for kind, key, count in rows:
         if kind in counters:
             counters[kind][key] = count
@@ -105,6 +125,7 @@ def get_profile(student_id: str, err: str | None = None) -> StudentProfile:
         level=_level(sum(passes.values()), sum(fails.values())),
         weak_topics=weak[:MAX_WEAK_TOPICS],
         typical_errors=[e for e, _ in errors.most_common(MAX_TYPICAL_ERRORS)],
+        solved_task_ids=solved,
     )
 
 
@@ -112,3 +133,4 @@ def reset_memory() -> None:
     """Очистить всю базу (для тестов)."""
     with closing(_connect()) as conn, conn:
         conn.execute("DELETE FROM stats")
+        conn.execute("DELETE FROM solved_tasks")

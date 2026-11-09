@@ -21,6 +21,7 @@ from core.llm_client import MODEL_NAME
 from core.metrics import summarize
 from core.orchestrator import MAX_STEPS, Agents, run_turn, stream_turn
 from core.stubs import stub_agents
+from core.task_selection import select_task
 
 log = logging.getLogger("tutor.api")
 if not log.handlers:
@@ -60,7 +61,7 @@ def _bank_next_task(req, err):
     tasks = bank.all_tasks()
     with _state_lock:
         solved = set(_sessions.get(req.student_id, {}).get("solved", []))
-    return next((t for t in tasks if t.task_id not in solved), tasks[0])
+    return select_task(tasks, req, solved)
 
 
 if _real_checker and bank.all_tasks():
@@ -133,6 +134,9 @@ def _commit_turn(req: ChatRequest, sess: dict, out: dict) -> dict:
             hint_level=out.get("next_hint_level", 1),
             history=out["history"][-50:],
         )
+        profile = out.get("profile")
+        if profile is not None:
+            sess["solved"] = list(dict.fromkeys([*sess["solved"], *profile.solved_task_ids]))
         verdict, solved_task = out.get("verdict"), out.get("task")
         if verdict is not None and verdict.passed and solved_task is not None:
             if solved_task.task_id not in sess["solved"]:
